@@ -1,11 +1,14 @@
 import { preferences } from '@kit.ArkData';
-
-interface StudyTask {
-  title: string;
-  subject: string;
-  minutes: number;
-  completed: boolean;
-}
+import {
+  createDemoSchedule,
+  createDemoTasks,
+  ScheduleItem,
+  StudyStateSnapshot,
+  StudyTask
+} from '../models/StudyModels';
+import { FocusClock } from '../services/FocusClock';
+import { StudyRepository } from '../services/StudyRepository';
+import { TodayPlanResult, TodayPlanService } from '../services/TodayPlanService';
 
 @Entry
 @Component
@@ -24,17 +27,17 @@ struct Index {
   @State profileSupportStyle: string = '温和陪伴';
   @State setupScheduleReady: boolean = false;
   @State currentTab: number = 0;
-  @State tasks: StudyTask[] = [
-    { title: '回顾矩阵运算规则', subject: '线性代数', minutes: 25, completed: false },
-    { title: '完成数据结构报告框架', subject: '数据结构', minutes: 30, completed: false },
-    { title: '线性代数基础小测', subject: '线性代数', minutes: 10, completed: false },
-    { title: '复习今日课堂笔记', subject: '专业课', minutes: 20, completed: false }
-  ];
+  @State tasks: StudyTask[] = createDemoTasks('线性代数', 60);
+  @State scheduleItems: ScheduleItem[] = createDemoSchedule();
   @State currentTaskIndex: number = 0;
   @State focusMinutes: number = 25;
   @State remainingSeconds: number = 25 * 60;
   @State isRunning: boolean = false;
+  @State focusElapsedSeconds: number = 0;
+  @State focusSegmentStartedAt: number = 0;
+  @State focusSessionCredited: boolean = false;
   @State todayMinutes: number = 0;
+  @State studyDayKey: string = '';
   @State shadowPulse: number = 1;
   @State newTaskTitle: string = '';
   @State energyState: string = '一般';
@@ -45,13 +48,15 @@ struct Index {
   @State squadMessage: string = '小队成员正在安静共学';
   private timerId: number = -1;
   private profileStore?: preferences.Preferences;
+  private repository?: StudyRepository;
 
   aboutToAppear(): void {
-    this.loadProfile();
+    this.loadAppState();
   }
 
   aboutToDisappear(): void {
-    this.stopTimer();
+    this.clearTimerInterval();
+    this.persistSilently();
   }
 
   private futureDate(days: number): string {
@@ -75,17 +80,117 @@ struct Index {
     return Math.max(0, Math.ceil((examTime - todayTime) / 86400000));
   }
 
+  private beijingDayKey(): string {
+    const beijingDate: Date = new Date(Date.now() + 8 * 60 * 60 * 1000);
+    const year: number = beijingDate.getUTCFullYear();
+    const month: string = (beijingDate.getUTCMonth() + 1).toString().padStart(2, '0');
+    const day: string = beijingDate.getUTCDate().toString().padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   private async ensureProfileStore(): Promise<preferences.Preferences> {
     if (this.profileStore === undefined) {
-      this.profileStore = await preferences.getPreferences(getContext(this), 'learner_profile');
+      const hostContext = this.getUIContext().getHostContext();
+      if (hostContext === undefined) {
+        throw new Error('Unable to access application context');
+      }
+      try {
+        this.profileStore = await preferences.getPreferences(hostContext, 'learner_profile');
+      } catch (error) {
+        console.error(`Index: unable to open local storage: ${error}`);
+        throw new Error('Unable to open local study storage');
+      }
+      this.repository = new StudyRepository(this.profileStore);
     }
     return this.profileStore;
   }
 
-  private async loadProfile(): Promise<void> {
+  private restoreSnapshot(snapshot: StudyStateSnapshot): void {
+    this.profileCompleted = snapshot.profileCompleted;
+    this.profileName = snapshot.profileName;
+    this.profileGrade = snapshot.profileGrade;
+    this.profileMajor = snapshot.profileMajor;
+    this.profileGoal = snapshot.profileGoal;
+    this.profileSubject = snapshot.profileSubject;
+    this.profileExamDate = snapshot.profileExamDate;
+    this.profileDailyMinutes = snapshot.profileDailyMinutes;
+    this.profilePreferredTime = snapshot.profilePreferredTime;
+    this.profileLearningStyle = snapshot.profileLearningStyle;
+    this.profileSupportStyle = snapshot.profileSupportStyle;
+    this.setupScheduleReady = snapshot.setupScheduleReady;
+    this.tasks = snapshot.tasks.length > 0 ? snapshot.tasks : createDemoTasks(snapshot.profileSubject,
+      snapshot.profileDailyMinutes);
+    this.scheduleItems = snapshot.scheduleItems.length > 0 ? snapshot.scheduleItems : createDemoSchedule();
+    this.currentTaskIndex = Math.min(Math.max(0, snapshot.currentTaskIndex), this.tasks.length - 1);
+    this.focusMinutes = snapshot.focusMinutes;
+    this.remainingSeconds = snapshot.remainingSeconds;
+    this.isRunning = snapshot.isRunning;
+    this.focusElapsedSeconds = snapshot.focusElapsedSeconds;
+    this.focusSegmentStartedAt = snapshot.focusSegmentStartedAt;
+    this.focusSessionCredited = snapshot.focusSessionCredited === true;
+    this.todayMinutes = snapshot.todayMinutes;
+    this.studyDayKey = snapshot.studyDayKey;
+    this.energyState = snapshot.energyState;
+    this.agentInput = snapshot.agentInput;
+    this.agentGenerated = snapshot.agentGenerated;
+    this.quizChoice = snapshot.quizChoice;
+    this.quizSubmitted = snapshot.quizSubmitted;
+  }
+
+  private snapshot(): StudyStateSnapshot {
+    return {
+      profileCompleted: this.profileCompleted,
+      profileName: this.profileName,
+      profileGrade: this.profileGrade,
+      profileMajor: this.profileMajor,
+      profileGoal: this.profileGoal,
+      profileSubject: this.profileSubject,
+      profileExamDate: this.profileExamDate,
+      profileDailyMinutes: this.profileDailyMinutes,
+      profilePreferredTime: this.profilePreferredTime,
+      profileLearningStyle: this.profileLearningStyle,
+      profileSupportStyle: this.profileSupportStyle,
+      setupScheduleReady: this.setupScheduleReady,
+      tasks: this.tasks,
+      scheduleItems: this.scheduleItems,
+      currentTaskIndex: this.currentTaskIndex,
+      focusMinutes: this.focusMinutes,
+      remainingSeconds: this.remainingSeconds,
+      isRunning: this.isRunning,
+      focusElapsedSeconds: this.focusElapsedSeconds,
+      focusSegmentStartedAt: this.focusSegmentStartedAt,
+      focusSessionCredited: this.focusSessionCredited,
+      todayMinutes: this.todayMinutes,
+      studyDayKey: this.studyDayKey,
+      energyState: this.energyState,
+      agentInput: this.agentInput,
+      agentGenerated: this.agentGenerated,
+      quizChoice: this.quizChoice,
+      quizSubmitted: this.quizSubmitted
+    };
+  }
+
+  private async persistState(): Promise<void> {
+    await this.ensureProfileStore();
+    if (this.repository !== undefined) {
+      await this.repository.save(this.snapshot());
+    }
+  }
+
+  private persistSilently(): void {
+    this.persistState().catch((error: Error) => {
+      console.error(`Index: failed to persist study state: ${error.message}`);
+    });
+  }
+
+  private async loadAppState(): Promise<void> {
     const defaultExamDate: string = this.futureDate(14);
     try {
       const store: preferences.Preferences = await this.ensureProfileStore();
+      const snapshot: StudyStateSnapshot | undefined = await this.repository?.load();
+      if (snapshot !== undefined) {
+        this.restoreSnapshot(snapshot);
+      } else {
       this.profileCompleted = await store.get('completed', false) as boolean;
       this.profileName = await store.get('name', '小林') as string;
       this.profileGrade = await store.get('grade', '大二') as string;
@@ -98,47 +203,39 @@ struct Index {
       this.profileLearningStyle = await store.get('learningStyle', '练习驱动') as string;
       this.profileSupportStyle = await store.get('supportStyle', '温和陪伴') as string;
       this.setupScheduleReady = await store.get('scheduleReady', false) as boolean;
+        if (this.profileCompleted) {
+          this.applyProfileToTasks();
+        }
+      }
     } catch (error) {
       this.profileCompleted = false;
       this.profileExamDate = defaultExamDate;
     }
-    this.profileLoaded = true;
-    if (this.profileCompleted) {
-      this.applyProfileToTasks();
+    const currentDayKey: string = this.beijingDayKey();
+    if (this.studyDayKey !== currentDayKey) {
+      this.studyDayKey = currentDayKey;
+      this.todayMinutes = 0;
     }
+    this.profileLoaded = true;
+    if (this.isRunning) {
+      this.refreshFocusClock();
+      if (this.isRunning) {
+        this.startTimerInterval();
+      }
+    }
+    this.persistSilently();
   }
 
   private applyProfileToTasks(): void {
     const primaryMinutes: number = Math.min(25, Math.max(10, this.profileDailyMinutes));
-    this.tasks = [
-      {
-        title: `回顾${this.profileSubject}核心知识点`,
-        subject: this.profileSubject,
-        minutes: primaryMinutes,
-        completed: false
-      },
-      {
-        title: `完成${this.profileSubject}练习`,
-        subject: this.profileSubject,
-        minutes: Math.min(30, Math.max(15, this.profileDailyMinutes - primaryMinutes)),
-        completed: false
-      },
-      {
-        title: `${this.profileSubject}基础小测`,
-        subject: this.profileSubject,
-        minutes: 10,
-        completed: false
-      },
-      {
-        title: '复习今日课堂笔记',
-        subject: '今日课程',
-        minutes: 20,
-        completed: false
-      }
-    ];
+    this.tasks = createDemoTasks(this.profileSubject, this.profileDailyMinutes);
     this.currentTaskIndex = 0;
     this.focusMinutes = primaryMinutes;
     this.remainingSeconds = primaryMinutes * 60;
+    this.focusElapsedSeconds = 0;
+    this.focusSegmentStartedAt = 0;
+    this.focusSessionCredited = false;
+    this.isRunning = false;
   }
 
   private async saveProfile(): Promise<void> {
@@ -146,32 +243,21 @@ struct Index {
       this.profileSubject.trim().length === 0 || this.profileExamDate.trim().length === 0) {
       return;
     }
-    const store: preferences.Preferences = await this.ensureProfileStore();
-    await store.put('completed', true);
-    await store.put('name', this.profileName.trim());
-    await store.put('grade', this.profileGrade);
-    await store.put('major', this.profileMajor.trim());
-    await store.put('goal', this.profileGoal);
-    await store.put('subject', this.profileSubject.trim());
-    await store.put('examDate', this.profileExamDate.trim());
-    await store.put('dailyMinutes', this.profileDailyMinutes);
-    await store.put('preferredTime', this.profilePreferredTime);
-    await store.put('learningStyle', this.profileLearningStyle);
-    await store.put('supportStyle', this.profileSupportStyle);
-    await store.put('scheduleReady', this.setupScheduleReady);
-    await store.flush();
+    this.profileName = this.profileName.trim();
+    this.profileMajor = this.profileMajor.trim();
+    this.profileSubject = this.profileSubject.trim();
+    this.profileExamDate = this.profileExamDate.trim();
     this.applyProfileToTasks();
     this.profileCompleted = true;
     this.currentTab = 0;
+    await this.persistState();
   }
 
   private async resetProfile(): Promise<void> {
-    this.stopTimer();
-    const store: preferences.Preferences = await this.ensureProfileStore();
-    await store.put('completed', false);
-    await store.flush();
+    this.pauseFocus();
     this.profileCompleted = false;
     this.currentTab = 0;
+    await this.persistState();
   }
 
   private choiceValue(group: string): string {
@@ -214,7 +300,8 @@ struct Index {
   }
 
   private currentTask(): StudyTask {
-    return this.tasks[this.currentTaskIndex];
+    const safeIndex: number = Math.min(Math.max(0, this.currentTaskIndex), this.tasks.length - 1);
+    return this.tasks[safeIndex];
   }
 
   private formatTime(seconds: number): string {
@@ -232,20 +319,23 @@ struct Index {
     return `${hour}小时${minute}分钟`;
   }
 
-  private stopTimer(): void {
+  private clearTimerInterval(): void {
     if (this.timerId >= 0) {
       clearInterval(this.timerId);
       this.timerId = -1;
     }
-    this.isRunning = false;
   }
 
   private beginFocus(index: number): void {
-    this.stopTimer();
+    this.clearTimerInterval();
     this.currentTaskIndex = index;
     this.focusMinutes = this.tasks[index].minutes;
     this.remainingSeconds = this.focusMinutes * 60;
-    this.currentTab = 2;
+    this.focusElapsedSeconds = 0;
+    this.focusSegmentStartedAt = 0;
+    this.focusSessionCredited = false;
+    this.isRunning = false;
+    this.currentTab = 3;
     this.startTimer();
   }
 
@@ -254,31 +344,78 @@ struct Index {
       return;
     }
     this.isRunning = true;
+    this.focusSegmentStartedAt = Date.now();
+    this.startTimerInterval();
+    this.persistSilently();
+  }
+
+  private startTimerInterval(): void {
+    this.clearTimerInterval();
     this.timerId = setInterval(() => {
-      if (this.remainingSeconds > 0) {
-        this.remainingSeconds -= 1;
-        this.shadowPulse = this.shadowPulse >= 1.08 ? 1 : this.shadowPulse + 0.01;
-      } else {
-        this.finishFocus();
-      }
+      this.refreshFocusClock();
     }, 1000);
   }
 
+  private refreshFocusClock(): void {
+    if (!this.isRunning) {
+      return;
+    }
+    this.remainingSeconds = FocusClock.remainingSeconds(
+      this.focusMinutes * 60,
+      this.focusElapsedSeconds,
+      this.focusSegmentStartedAt,
+      Date.now()
+    );
+    this.shadowPulse = this.shadowPulse >= 1.08 ? 1 : this.shadowPulse + 0.01;
+    if (this.remainingSeconds <= 0) {
+      this.finishFocus();
+    }
+  }
+
+  private pauseFocus(): void {
+    if (this.isRunning) {
+      this.focusElapsedSeconds = FocusClock.elapsedSeconds(
+        this.focusElapsedSeconds,
+        this.focusSegmentStartedAt,
+        Date.now()
+      );
+    }
+    this.remainingSeconds = Math.max(0, this.focusMinutes * 60 - this.focusElapsedSeconds);
+    this.focusSegmentStartedAt = 0;
+    this.isRunning = false;
+    this.clearTimerInterval();
+    this.persistSilently();
+  }
+
   private resetFocus(): void {
-    this.stopTimer();
+    this.clearTimerInterval();
+    this.isRunning = false;
+    this.focusElapsedSeconds = 0;
+    this.focusSegmentStartedAt = 0;
+    this.focusSessionCredited = false;
     this.remainingSeconds = this.focusMinutes * 60;
     this.shadowPulse = 1;
+    this.persistSilently();
   }
 
   private finishFocus(): void {
-    this.stopTimer();
-    if (this.remainingSeconds > 0) {
-      this.remainingSeconds = 0;
+    let elapsedSeconds: number = this.focusElapsedSeconds;
+    if (this.isRunning) {
+      elapsedSeconds = FocusClock.elapsedSeconds(elapsedSeconds, this.focusSegmentStartedAt, Date.now());
+    }
+    this.clearTimerInterval();
+    this.isRunning = false;
+    this.focusSegmentStartedAt = 0;
+    this.focusElapsedSeconds = Math.min(this.focusMinutes * 60, elapsedSeconds);
+    this.remainingSeconds = 0;
+    if (!this.focusSessionCredited) {
+      this.todayMinutes += FocusClock.completedMinutes(this.focusElapsedSeconds);
+      this.focusSessionCredited = true;
     }
     if (!this.tasks[this.currentTaskIndex].completed) {
-      this.todayMinutes += this.focusMinutes;
       this.setTaskCompleted(this.currentTaskIndex, true);
     }
+    this.persistSilently();
   }
 
   private setTaskCompleted(index: number, completed: boolean): void {
@@ -293,6 +430,7 @@ struct Index {
       }
       return task;
     });
+    this.persistSilently();
   }
 
   private addTask(): void {
@@ -307,25 +445,23 @@ struct Index {
       completed: false
     }]);
     this.newTaskTitle = '';
+    this.persistSilently();
   }
 
   private generateTodayPlan(): void {
     const text: string = this.agentInput.trim();
-    const subject: string = text.includes('英语') ? '英语四六级' :
-      (text.includes('高数') ? '高等数学' : this.profileSubject);
-    const tired: boolean = text.includes('累') || text.includes('疲惫');
-    const firstMinutes: number = tired ? 15 : Math.min(25, this.profileDailyMinutes);
-    this.profileSubject = subject;
-    this.tasks = [
-      { title: `梳理${subject}最薄弱知识点`, subject: subject, minutes: firstMinutes, completed: false },
-      { title: `完成${subject}针对练习`, subject: subject, minutes: tired ? 15 : 25, completed: false },
-      { title: `${subject}即时小测`, subject: subject, minutes: 10, completed: false },
-      { title: '根据小测结果调整明日计划', subject: '学习复盘', minutes: 5, completed: false }
-    ];
+    const result: TodayPlanResult = TodayPlanService.generate(text, this.profileSubject, this.profileDailyMinutes);
+    this.profileSubject = result.subject;
+    this.tasks = result.tasks;
     this.currentTaskIndex = 0;
-    this.focusMinutes = firstMinutes;
-    this.remainingSeconds = firstMinutes * 60;
+    this.focusMinutes = result.firstFocusMinutes;
+    this.remainingSeconds = result.firstFocusMinutes * 60;
+    this.focusElapsedSeconds = 0;
+    this.focusSegmentStartedAt = 0;
+    this.focusSessionCredited = false;
+    this.isRunning = false;
     this.agentGenerated = true;
+    this.persistSilently();
   }
 
   private planProgress(): number {
@@ -333,6 +469,31 @@ struct Index {
       return 0;
     }
     return Math.round(this.completedCount() * 100 / this.tasks.length);
+  }
+
+  private submitQuiz(): void {
+    if (this.quizChoice.length === 0) {
+      return;
+    }
+    this.quizSubmitted = true;
+    if (this.quizChoice === 'B') {
+      const quizIndex: number = this.tasks.findIndex((task: StudyTask) => task.title.includes('小测'));
+      if (quizIndex >= 0) {
+        this.setTaskCompleted(quizIndex, true);
+      }
+    } else {
+      const reviewTitle: string = '回顾可逆矩阵与秩的关系';
+      const reviewExists: boolean = this.tasks.some((task: StudyTask) => task.title === reviewTitle);
+      if (!reviewExists) {
+        this.tasks = this.tasks.concat([{
+          title: reviewTitle,
+          subject: this.profileSubject,
+          minutes: 10,
+          completed: false
+        }]);
+      }
+    }
+    this.persistSilently();
   }
 
   @Builder
@@ -672,25 +833,23 @@ struct Index {
           }
           .width('100%')
           if (this.setupScheduleReady) {
-            Row({ space: 12 }) {
-              Text('08:00').fontSize(13).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
-              Column({ space: 3 }) {
-                Text('高等数学').width('100%').fontSize(15).fontWeight(FontWeight.Bold)
-                Text('第1-2节 · 教学楼 A203').width('100%').fontSize(12).fontColor('#9397A9')
-              }.layoutWeight(1)
-            }.width('100%')
-            Row({ space: 12 }) {
-              Text('14:00').fontSize(13).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
-              Column({ space: 3 }) {
-                Text('数据结构实验').width('100%').fontSize(15).fontWeight(FontWeight.Bold)
-                Text('第5-6节 · 实验楼 C301').width('100%').fontSize(12).fontColor('#9397A9')
-              }.layoutWeight(1)
-            }.width('100%')
+            ForEach(this.scheduleItems, (item: ScheduleItem) => {
+              Row({ space: 12 }) {
+                Text(item.startTime).fontSize(13).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
+                Column({ space: 3 }) {
+                  Text(item.course).width('100%').fontSize(15).fontWeight(FontWeight.Bold)
+                  Text(`${item.startTime}-${item.endTime} · ${item.location}`)
+                    .width('100%').fontSize(12).fontColor('#9397A9')
+                }.layoutWeight(1)
+              }.width('100%')
+            }, (item: ScheduleItem) => item.id)
           } else {
             Button('使用演示课表')
               .width('100%').height(42).fontColor('#5B5FEF').backgroundColor('#ECEBFF')
               .onClick(() => {
                 this.setupScheduleReady = true;
+                this.scheduleItems = createDemoSchedule();
+                this.persistSilently();
               })
           }
         }
@@ -820,9 +979,7 @@ struct Index {
           Button('提交答案')
             .width('100%').height(42).backgroundColor('#5B5FEF')
             .onClick(() => {
-              if (this.quizChoice.length > 0) {
-                this.quizSubmitted = true;
-              }
+              this.submitQuiz();
             })
           if (this.quizSubmitted) {
             Text(this.quizChoice === 'B' ? '回答正确：可逆矩阵满秩，列向量线性无关。' : '还差一点。建议回顾“可逆矩阵与秩”的关系，随后再测一次。')
@@ -872,17 +1029,21 @@ struct Index {
           Column({ space: 7 }) {
             Text(this.formatTime(this.remainingSeconds))
               .fontSize(45).fontWeight(FontWeight.Bold).fontColor(Color.White)
-            Text(this.isRunning ? '学习影子正在生长' : '本轮专注已暂停')
+            Text(this.isRunning ? '学习影子正在生长' :
+              (this.remainingSeconds <= 0 ? '本轮专注已完成' : '本轮专注已暂停'))
               .fontSize(13).fontColor('#D8D6F0')
           }
         }
         .width('100%').height(250)
         Row({ space: 10 }) {
-          Button(this.isRunning ? '暂停' : '继续')
+          Button(this.isRunning ? '暂停' : (this.remainingSeconds <= 0 ? '再次专注' : '继续'))
             .layoutWeight(1).height(46).backgroundColor('#625AF5')
             .onClick(() => {
               if (this.isRunning) {
-                this.stopTimer();
+                this.pauseFocus();
+              } else if (this.remainingSeconds <= 0) {
+                this.resetFocus();
+                this.startTimer();
               } else {
                 this.startTimer();
               }
@@ -894,8 +1055,10 @@ struct Index {
             })
         }
         .width('100%')
-        Button('完成本轮专注')
-          .width('100%').height(46).fontColor('#24213F').backgroundColor('#E5E2FF')
+        Button(this.currentTask().completed ? '✓ 本轮任务已完成' : '完成本轮专注')
+          .width('100%').height(46).fontColor('#24213F')
+          .backgroundColor(this.currentTask().completed ? '#CAC7E8' : '#E5E2FF')
+          .enabled(!this.currentTask().completed)
           .onClick(() => {
             this.finishFocus();
           })
@@ -1026,6 +1189,7 @@ struct Index {
       .padding({ left: 14, right: 14, top: 9, bottom: 9 }).borderRadius(16)
       .onClick(() => {
         this.energyState = title;
+        this.persistSilently();
       })
   }
 

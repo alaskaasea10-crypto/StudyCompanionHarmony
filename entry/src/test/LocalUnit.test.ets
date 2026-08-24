@@ -1,33 +1,24 @@
-import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
+import { describe, expect, it } from '@ohos/hypium';
+import { FocusClock } from '../main/ets/services/FocusClock';
+import { TodayPlanResult, TodayPlanService } from '../main/ets/services/TodayPlanService';
 
 export default function localUnitTest() {
-  describe('localUnitTest', () => {
-    // Defines a test suite. Two parameters are supported: test suite name and test suite function.
-    beforeAll(() => {
-      // Presets an action, which is performed only once before all test cases of the test suite start.
-      // This API supports only one parameter: preset action function.
+  describe('StudyFoundation', () => {
+    it('restoresRunningFocusFromTimestamps', 0, () => {
+      const remaining: number = FocusClock.remainingSeconds(1500, 120, 100000, 160000);
+      expect(remaining).assertEqual(1320);
     });
-    beforeEach(() => {
-      // Presets an action, which is performed before each unit test case starts.
-      // The number of execution times is the same as the number of test cases defined by **it**.
-      // This API supports only one parameter: preset action function.
+
+    it('doesNotReturnNegativeRemainingTime', 0, () => {
+      const remaining: number = FocusClock.remainingSeconds(60, 50, 100000, 120000);
+      expect(remaining).assertEqual(0);
     });
-    afterEach(() => {
-      // Presets a clear action, which is performed after each unit test case ends.
-      // The number of execution times is the same as the number of test cases defined by **it**.
-      // This API supports only one parameter: clear action function.
-    });
-    afterAll(() => {
-      // Presets a clear action, which is performed after all test cases of the test suite end.
-      // This API supports only one parameter: clear action function.
-    });
-    it('assertContain', 0, () => {
-      // Defines a test case. This API supports three parameters: test case name, filter parameter, and test case function.
-      let a = 'abc';
-      let b = 'b';
-      // Defines a variety of assertion methods, which are used to declare expected boolean conditions.
-      expect(a).assertContain(b);
-      expect(a).assertEqual(a);
+
+    it('reducesPlanWhenStudentIsTired', 0, () => {
+      const result: TodayPlanResult = TodayPlanService.generate('今晚有点累，想复习高数', '线性代数', 60);
+      expect(result.subject).assertEqual('高等数学');
+      expect(result.firstFocusMinutes).assertEqual(15);
+      expect(result.tasks.length).assertEqual(4);
     });
   });
 }
