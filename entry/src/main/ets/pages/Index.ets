@@ -38,6 +38,11 @@ struct Index {
   @State shadowPulse: number = 1;
   @State newTaskTitle: string = '';
   @State energyState: string = '一般';
+  @State agentInput: string = '';
+  @State agentGenerated: boolean = false;
+  @State quizChoice: string = '';
+  @State quizSubmitted: boolean = false;
+  @State squadMessage: string = '小队成员正在安静共学';
   private timerId: number = -1;
   private profileStore?: preferences.Preferences;
 
@@ -302,6 +307,32 @@ struct Index {
       completed: false
     }]);
     this.newTaskTitle = '';
+  }
+
+  private generateTodayPlan(): void {
+    const text: string = this.agentInput.trim();
+    const subject: string = text.includes('英语') ? '英语四六级' :
+      (text.includes('高数') ? '高等数学' : this.profileSubject);
+    const tired: boolean = text.includes('累') || text.includes('疲惫');
+    const firstMinutes: number = tired ? 15 : Math.min(25, this.profileDailyMinutes);
+    this.profileSubject = subject;
+    this.tasks = [
+      { title: `梳理${subject}最薄弱知识点`, subject: subject, minutes: firstMinutes, completed: false },
+      { title: `完成${subject}针对练习`, subject: subject, minutes: tired ? 15 : 25, completed: false },
+      { title: `${subject}即时小测`, subject: subject, minutes: 10, completed: false },
+      { title: '根据小测结果调整明日计划', subject: '学习复盘', minutes: 5, completed: false }
+    ];
+    this.currentTaskIndex = 0;
+    this.focusMinutes = firstMinutes;
+    this.remainingSeconds = firstMinutes * 60;
+    this.agentGenerated = true;
+  }
+
+  private planProgress(): number {
+    if (this.tasks.length === 0) {
+      return 0;
+    }
+    return Math.round(this.completedCount() * 100 / this.tasks.length);
   }
 
   @Builder
@@ -632,6 +663,38 @@ struct Index {
     Scroll() {
       Column({ space: 16 }) {
         this.PageHeader('📋', '计划', '今日行动清单 · 根据考试目标动态调整')
+        Column({ space: 12 }) {
+          Row() {
+            Text('今日课表').fontSize(18).fontWeight(FontWeight.Bold)
+            Blank()
+            Text(this.setupScheduleReady ? '已同步' : '待导入').fontSize(12)
+              .fontColor(this.setupScheduleReady ? '#218764' : '#A26B4E')
+          }
+          .width('100%')
+          if (this.setupScheduleReady) {
+            Row({ space: 12 }) {
+              Text('08:00').fontSize(13).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
+              Column({ space: 3 }) {
+                Text('高等数学').width('100%').fontSize(15).fontWeight(FontWeight.Bold)
+                Text('第1-2节 · 教学楼 A203').width('100%').fontSize(12).fontColor('#9397A9')
+              }.layoutWeight(1)
+            }.width('100%')
+            Row({ space: 12 }) {
+              Text('14:00').fontSize(13).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
+              Column({ space: 3 }) {
+                Text('数据结构实验').width('100%').fontSize(15).fontWeight(FontWeight.Bold)
+                Text('第5-6节 · 实验楼 C301').width('100%').fontSize(12).fontColor('#9397A9')
+              }.layoutWeight(1)
+            }.width('100%')
+          } else {
+            Button('使用演示课表')
+              .width('100%').height(42).fontColor('#5B5FEF').backgroundColor('#ECEBFF')
+              .onClick(() => {
+                this.setupScheduleReady = true;
+              })
+          }
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(20)
         Row({ space: 10 }) {
           TextInput({ placeholder: '添加今天要完成的任务', text: this.newTaskTitle })
             .layoutWeight(1).height(46).backgroundColor(Color.White).borderRadius(14)
@@ -658,6 +721,131 @@ struct Index {
         ForEach(this.tasks, (task: StudyTask, index: number) => {
           this.PlanTaskCard(index)
         }, (task: StudyTask, index: number) => `${index}-${task.title}`)
+      }
+      .width('100%').padding(20)
+    }
+    .layoutWeight(1)
+  }
+
+  @Builder
+  QuizOption(value: string, text: string) {
+    Row({ space: 10 }) {
+      Text(value)
+        .width(30).height(30).textAlign(TextAlign.Center).fontSize(13).fontWeight(FontWeight.Bold)
+        .fontColor(this.quizChoice === value ? Color.White : '#5B5FEF')
+        .backgroundColor(this.quizChoice === value ? '#5B5FEF' : '#ECEBFF').borderRadius(15)
+      Text(text).layoutWeight(1).fontSize(14).fontColor('#34374A')
+    }
+    .width('100%').padding(12).backgroundColor('#F7F7FB').borderRadius(14)
+    .onClick(() => {
+      this.quizChoice = value;
+      this.quizSubmitted = false;
+    })
+  }
+
+  @Builder
+  LearningPage() {
+    Scroll() {
+      Column({ space: 16 }) {
+        this.PageHeader('📚', '智能学习', '自然语言规划 · 自适应计划 · 小测反馈')
+        Column({ space: 13 }) {
+          Row() {
+            Text('✦ 和 Agent 理清今天要做的事').fontSize(17).fontWeight(FontWeight.Bold)
+            Blank()
+            Text('读取学习画像').fontSize(11).fontColor('#5B5FEF').backgroundColor('#ECEBFF')
+              .padding({ left: 9, right: 9, top: 5, bottom: 5 }).borderRadius(12)
+          }.width('100%')
+          Text(`已读取：${this.profileGrade} · ${this.profileLearningStyle} · 每天${this.profileDailyMinutes}分钟`)
+            .width('100%').fontSize(12).fontColor('#9397A9')
+          TextArea({
+            placeholder: '例如：下周线代考试，矩阵不太熟，而且今晚有点累。',
+            text: this.agentInput
+          })
+            .width('100%').height(90).backgroundColor('#F6F7FB').borderRadius(14)
+            .onChange((value: string) => {
+              this.agentInput = value;
+            })
+          Button('交给 Agent')
+            .width('100%').height(44).backgroundColor('#5B5FEF').borderRadius(15)
+            .onClick(() => {
+              this.generateTodayPlan();
+            })
+          if (this.agentGenerated) {
+            Column({ space: 8 }) {
+              Text(`今日行动清单 · ${this.tasks.length}项`).width('100%').fontSize(14)
+                .fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
+              ForEach(this.tasks, (task: StudyTask, index: number) => {
+                Row() {
+                  Text(`${index + 1}. ${task.title}`).layoutWeight(1).fontSize(13)
+                  Text(`${task.minutes}分钟`).fontSize(12).fontColor('#9397A9')
+                }.width('100%').padding(10).backgroundColor(Color.White).borderRadius(12)
+              }, (task: StudyTask, index: number) => `agent-${index}-${task.title}`)
+              Text('已同步：首页建议、今日待办、考试科目与番茄钟')
+                .width('100%').fontSize(12).fontColor('#218764')
+            }
+            .width('100%').padding(12).backgroundColor('#E8F8F2').borderRadius(14)
+          }
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Column({ space: 13 }) {
+          Row() {
+            Text('自适应学习计划').fontSize(18).fontWeight(FontWeight.Bold)
+            Blank()
+            Text(`${this.planProgress()}%`).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
+          }.width('100%')
+          Text(`${this.profileSubject} · 距考试${this.examDays()}天 · ${this.profileExamDate}`)
+            .width('100%').fontSize(13).fontColor('#777C90')
+          Row({ space: 8 }) {
+            Text('Day 1').fontSize(12).fontColor(Color.White).backgroundColor('#5B5FEF')
+              .padding({ left: 10, right: 10, top: 7, bottom: 7 }).borderRadius(12)
+            Text('基础梳理').fontSize(13)
+            Text('→').fontSize(13).fontColor('#A1A5B5')
+            Text('针对练习').fontSize(13)
+            Text('→').fontSize(13).fontColor('#A1A5B5')
+            Text('即时小测').fontSize(13)
+          }.width('100%')
+          Text('任务完成后自动更新完成率；小测结果将决定下一轮复习重点。')
+            .width('100%').fontSize(12).fontColor('#9397A9')
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Column({ space: 12 }) {
+          Text('AI 小测 · 学 → 测 → 补').width('100%').fontSize(18).fontWeight(FontWeight.Bold)
+          Text('若矩阵 A 可逆，下列结论正确的是？').width('100%').fontSize(15).fontWeight(FontWeight.Medium)
+          this.QuizOption('A', 'det(A)=0')
+          this.QuizOption('B', 'A 的列向量线性无关')
+          this.QuizOption('C', 'A 没有逆矩阵')
+          this.QuizOption('D', 'A 的秩小于列数')
+          Button('提交答案')
+            .width('100%').height(42).backgroundColor('#5B5FEF')
+            .onClick(() => {
+              if (this.quizChoice.length > 0) {
+                this.quizSubmitted = true;
+              }
+            })
+          if (this.quizSubmitted) {
+            Text(this.quizChoice === 'B' ? '回答正确：可逆矩阵满秩，列向量线性无关。' : '还差一点。建议回顾“可逆矩阵与秩”的关系，随后再测一次。')
+              .width('100%').fontSize(13)
+              .fontColor(this.quizChoice === 'B' ? '#218764' : '#C2623A')
+              .backgroundColor(this.quizChoice === 'B' ? '#E8F8F2' : '#FFF2E8')
+              .padding(12).borderRadius(12)
+          }
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Column({ space: 12 }) {
+          Text('大学学习路线图').width('100%').fontSize(18).fontWeight(FontWeight.Bold)
+          Text(`${this.profileSubject}章节导航`).width('100%').fontSize(13).fontColor('#9397A9')
+          Row({ space: 7 }) {
+            Text('基础概念').fontSize(12).padding(9).backgroundColor('#ECEBFF').borderRadius(12)
+            Text('→').fontSize(12)
+            Text('核心方法').fontSize(12).padding(9).backgroundColor('#ECEBFF').borderRadius(12)
+            Text('→').fontSize(12)
+            Text('真题应用').fontSize(12).padding(9).backgroundColor('#ECEBFF').borderRadius(12)
+          }.width('100%')
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
       }
       .width('100%').padding(20)
     }
@@ -728,6 +916,105 @@ struct Index {
       .width('100%').padding({ left: 20, right: 20, top: 24, bottom: 24 })
     }
     .layoutWeight(1).backgroundColor('#17152F')
+  }
+
+  @Builder
+  GrowthPage() {
+    Scroll() {
+      Column({ space: 16 }) {
+        this.PageHeader('🌱', '成长与小队', '学习影子 · 非打扰共学 · 校园成长服务')
+        Column({ space: 14 }) {
+          Row({ space: 14 }) {
+            Stack() {
+              Column().width(70).height(70).backgroundColor('#D8F8EE').borderRadius(35)
+              Text('✦').fontSize(34).fontColor('#35C99A')
+            }.width(76).height(76)
+            Column({ space: 5 }) {
+              Text('你的学习影子 · 微光').width('100%').fontSize(18).fontWeight(FontWeight.Bold)
+              Text(`今日专注 ${this.todayTimeText()} · 随专注时长生长`).width('100%').fontSize(12).fontColor('#9397A9')
+              Text(this.isRunning ? '正在发光，队友能感受到你在学习' : '开始番茄钟后，影子会进入共学空间')
+                .width('100%').fontSize(12).fontColor('#35A982')
+            }.layoutWeight(1)
+          }.width('100%')
+          Button(this.isRunning ? '进入学习影子空间' : '开始专注并进入影子空间')
+            .width('100%').height(44).backgroundColor('#24213F')
+            .onClick(() => {
+              this.currentTab = 3;
+              if (!this.isRunning) {
+                this.startTimer();
+              }
+            })
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Column({ space: 13 }) {
+          Row() {
+            Column({ space: 3 }) {
+              Text(`${this.profileSubject}互助小队`).width('100%').fontSize(18).fontWeight(FontWeight.Bold)
+              Text('4人小队 · 目标一致 · 轻度竞争').width('100%').fontSize(12).fontColor('#9397A9')
+            }.layoutWeight(1)
+            Text('Lv.2').fontSize(12).fontColor('#A85D22').backgroundColor('#FFF1DF')
+              .padding({ left: 10, right: 10, top: 7, bottom: 7 }).borderRadius(13)
+          }.width('100%')
+          Text(`🎯 30天完成${this.profileSubject}复习`).width('100%').fontSize(15).fontWeight(FontWeight.Bold)
+          Row() {
+            Text('你 · 队长').layoutWeight(1).fontSize(13)
+            Text('70% · 已完成今日任务').fontSize(12).fontColor('#5B5FEF')
+          }.width('100%').padding(10).backgroundColor('#F6F7FB').borderRadius(12)
+          Row() {
+            Text('小明 · 氛围官').layoutWeight(1).fontSize(13)
+            Text('55% · 正在专注').fontSize(12).fontColor('#35A982')
+          }.width('100%').padding(10).backgroundColor('#F6F7FB').borderRadius(12)
+          Row() {
+            Text('小红 · 分享者').layoutWeight(1).fontSize(13)
+            Text('40% · 还有3个任务').fontSize(12).fontColor('#D26B72')
+          }.width('100%').padding(10).backgroundColor('#F6F7FB').borderRadius(12)
+          Row({ space: 8 }) {
+            Button('鼓励队友').layoutWeight(1).height(39).fontSize(12).backgroundColor('#5B5FEF')
+              .onClick(() => {
+                this.squadMessage = '已送出一束微光，既鼓励又不打扰';
+              })
+            Button('发起挑战').layoutWeight(1).height(39).fontSize(12).fontColor('#5B5FEF').backgroundColor('#ECEBFF')
+              .onClick(() => {
+                this.squadMessage = '已创建“共同专注25分钟”挑战';
+              })
+          }.width('100%')
+          Text(this.squadMessage).width('100%').fontSize(12).fontColor('#777C90')
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Column({ space: 13 }) {
+          Text('校园与职业助手').width('100%').fontSize(18).fontWeight(FontWeight.Bold)
+          Row({ space: 10 }) {
+            Column({ space: 5 }) {
+              Text('🏠').fontSize(24)
+              Text('租房避坑').fontSize(13).fontWeight(FontWeight.Bold)
+              Text('合同与押金检查').fontSize(11).fontColor('#9397A9')
+            }.layoutWeight(1).padding(13).backgroundColor('#FFF4EA').borderRadius(15)
+            Column({ space: 5 }) {
+              Text('💼').fontSize(24)
+              Text('职业规划').fontSize(13).fontWeight(FontWeight.Bold)
+              Text('能力画像与路线').fontSize(11).fontColor('#9397A9')
+            }.layoutWeight(1).padding(13).backgroundColor('#EEF3FF').borderRadius(15)
+          }.width('100%')
+          Row({ space: 10 }) {
+            Column({ space: 5 }) {
+              Text('🏥').fontSize(24)
+              Text('医保报销').fontSize(13).fontWeight(FontWeight.Bold)
+              Text('流程与材料清单').fontSize(11).fontColor('#9397A9')
+            }.layoutWeight(1).padding(13).backgroundColor('#EAF8F3').borderRadius(15)
+            Column({ space: 5 }) {
+              Text('📄').fontSize(24)
+              Text('合同检查').fontSize(13).fontWeight(FontWeight.Bold)
+              Text('识别常见风险项').fontSize(11).fontColor('#9397A9')
+            }.layoutWeight(1).padding(13).backgroundColor('#F6EEFF').borderRadius(15)
+          }.width('100%')
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+      }
+      .width('100%').padding(20)
+    }
+    .layoutWeight(1)
   }
 
   @Builder
@@ -825,15 +1112,21 @@ struct Index {
         } else if (this.currentTab === 1) {
           this.PlanPage()
         } else if (this.currentTab === 2) {
+          this.LearningPage()
+        } else if (this.currentTab === 3) {
           this.FocusPage()
+        } else if (this.currentTab === 4) {
+          this.GrowthPage()
         } else {
           this.ProfilePage()
         }
         Row() {
           this.TabButton(0, '⌂', '首页')
           this.TabButton(1, '📋', '计划')
-          this.TabButton(2, '◉', '专注')
-          this.TabButton(3, '👤', '我的')
+          this.TabButton(2, '📚', '学习')
+          this.TabButton(3, '◉', '专注')
+          this.TabButton(4, '🌱', '成长')
+          this.TabButton(5, '👤', '我的')
         }
         .width('100%').height(72).backgroundColor(Color.White)
         .borderRadius({ topLeft: 22, topRight: 22 })
