@@ -7,6 +7,7 @@ import {
   StudyTask
 } from '../models/StudyModels';
 import { FocusClock } from '../services/FocusClock';
+import { RecommendationResult, RecommendationService } from '../services/RecommendationService';
 import { StudyRepository } from '../services/StudyRepository';
 import { TodayPlanResult, TodayPlanService } from '../services/TodayPlanService';
 
@@ -45,6 +46,7 @@ struct Index {
   @State agentGenerated: boolean = false;
   @State quizChoice: string = '';
   @State quizSubmitted: boolean = false;
+  @State showRecommendationDetails: boolean = false;
   @State squadMessage: string = '小队成员正在安静共学';
   private timerId: number = -1;
   private profileStore?: preferences.Preferences;
@@ -317,6 +319,35 @@ struct Index {
     const hour: number = Math.floor(this.todayMinutes / 60);
     const minute: number = this.todayMinutes % 60;
     return `${hour}小时${minute}分钟`;
+  }
+
+  private beijingGreeting(): string {
+    const beijingDate: Date = new Date(Date.now() + 8 * 60 * 60 * 1000);
+    const hour: number = beijingDate.getUTCHours();
+    if (hour < 6) {
+      return '夜深了';
+    }
+    if (hour < 12) {
+      return '上午好';
+    }
+    if (hour < 18) {
+      return '下午好';
+    }
+    return '晚上好';
+  }
+
+  private recommendation(): RecommendationResult {
+    return RecommendationService.recommend({
+      goal: this.profileGoal,
+      learningStyle: this.profileLearningStyle,
+      energyState: this.energyState,
+      subject: this.profileSubject,
+      examDays: this.examDays(),
+      scheduleReady: this.setupScheduleReady,
+      scheduleItems: this.scheduleItems,
+      tasks: this.tasks,
+      now: Date.now()
+    });
   }
 
   private clearTimerInterval(): void {
@@ -729,7 +760,8 @@ struct Index {
       Column({ space: 18 }) {
         Row() {
           Column({ space: 4 }) {
-            Text(`上午好，${this.profileName}`).fontSize(26).fontWeight(FontWeight.Bold).fontColor('#202235')
+            Text(`${this.beijingGreeting()}，${this.profileName}`)
+              .fontSize(26).fontWeight(FontWeight.Bold).fontColor('#202235')
             Text('今天从一件小事开始').fontSize(15).fontColor('#8B90A5')
           }
           .alignItems(HorizontalAlign.Start)
@@ -749,21 +781,45 @@ struct Index {
             Text('主动建议').fontSize(14).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
           }
           .width('100%')
-          Text(`现在最值得做：${this.tasks[0].title}`)
+          Text(this.recommendation().allDone ? this.recommendation().title :
+            `现在最值得做：${this.recommendation().title}`)
             .width('100%').fontSize(22).fontWeight(FontWeight.Bold).fontColor('#202235')
-          Text(`按照你“${this.profileGoal} · ${this.profileLearningStyle}”的画像，结合考试日期、今日课表和“${this.energyState}”的状态，先完成一个${this.tasks[0].minutes}分钟的小目标。`)
+          Text(this.recommendation().reason)
             .width('100%').fontSize(15).fontColor('#666C82').lineHeight(23)
-          Row({ space: 8 }) {
-            Text(`⏱ ${this.tasks[0].minutes}分钟`).fontSize(13).fontColor('#555A70')
-            Text(`📘 ${this.profileSubject}`).fontSize(13).fontColor('#555A70')
-            Text(`🎯 还有${this.examDays()}天`).fontSize(13).fontColor('#555A70')
+          if (!this.recommendation().allDone) {
+            Row({ space: 8 }) {
+              Text(`⏱ ${this.recommendation().minutes}分钟`).fontSize(13).fontColor('#555A70')
+              Text(`📘 ${this.profileSubject}`).fontSize(13).fontColor('#555A70')
+              Text(`🎯 还有${this.examDays()}天`).fontSize(13).fontColor('#555A70')
+            }
+            .width('100%')
+          }
+          Row({ space: 10 }) {
+            Button(this.recommendation().allDone ? '今日计划已完成' :
+              `开始 ${this.recommendation().minutes} 分钟`)
+              .layoutWeight(1).height(48).fontSize(15)
+              .backgroundColor(this.recommendation().allDone ? '#B8B9C8' : '#5B5FEF').borderRadius(16)
+              .enabled(!this.recommendation().allDone)
+              .onClick(() => {
+                if (!this.recommendation().allDone) {
+                  this.beginFocus(this.recommendation().taskIndex);
+                }
+              })
+            Button(this.showRecommendationDetails ? '收起理由' : '为什么推荐')
+              .height(48).fontSize(13).fontColor('#5B5FEF').backgroundColor(Color.White).borderRadius(16)
+              .onClick(() => {
+                this.showRecommendationDetails = !this.showRecommendationDetails;
+              })
           }
           .width('100%')
-          Button(`开始 ${this.tasks[0].minutes} 分钟`)
-            .width('100%').height(48).fontSize(16).backgroundColor('#5B5FEF').borderRadius(16)
-            .onClick(() => {
-              this.beginFocus(0);
-            })
+          if (this.showRecommendationDetails) {
+            Column({ space: 7 }) {
+              ForEach(this.recommendation().evidence, (item: string) => {
+                Text(`• ${item}`).width('100%').fontSize(12).fontColor('#666C82')
+              }, (item: string) => item)
+            }
+            .width('100%').padding(12).backgroundColor(Color.White).borderRadius(14)
+          }
         }
         .width('100%').padding(20).backgroundColor('#F0EFFF').borderRadius(24)
 
@@ -779,6 +835,27 @@ struct Index {
           }
           .layoutWeight(1).padding(16).backgroundColor(Color.White).borderRadius(18)
         }
+
+        Column({ space: 12 }) {
+          Row() {
+            Text('主动服务时间线').fontSize(18).fontWeight(FontWeight.Bold)
+            Blank()
+            Text('北京时间').fontSize(11).fontColor('#5B5FEF').backgroundColor('#ECEBFF')
+              .padding({ left: 9, right: 9, top: 5, bottom: 5 }).borderRadius(12)
+          }
+          .width('100%')
+          Row({ space: 12 }) {
+            Text(this.recommendation().timelineTime)
+              .width(50).fontSize(13).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
+            Column({ space: 4 }) {
+              Text(this.recommendation().timelineTitle).width('100%').fontSize(15).fontWeight(FontWeight.Bold)
+              Text(this.recommendation().timelineDetail).width('100%').fontSize(12).fontColor('#9397A9')
+            }
+            .layoutWeight(1)
+          }
+          .width('100%').padding(14).backgroundColor('#F7F7FB').borderRadius(16)
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
 
         Column({ space: 4 }) {
           Text('今日待办').width('100%').fontSize(18).fontWeight(FontWeight.Bold).margin({ bottom: 4 })
