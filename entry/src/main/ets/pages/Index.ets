@@ -698,16 +698,26 @@ struct Index {
 
   @Builder
   TabButton(index: number, icon: string, title: string) {
-    Column({ space: 3 }) {
-      Text(icon).fontSize(21)
+    Column() {
+      Text(icon)
+        .width('100%')
+        .height(30)
+        .fontSize(21)
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
       Text(title)
+        .width('100%')
+        .height(22)
         .fontSize(12)
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
         .fontWeight(this.currentTab === index ? FontWeight.Bold : FontWeight.Normal)
         .fontColor(this.currentTab === index ? '#5B5FEF' : '#8B90A5')
     }
     .layoutWeight(1)
-    .height(64)
+    .height(72)
     .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
     .onClick(() => {
       this.currentTab = index;
     })
@@ -1362,10 +1372,10 @@ struct Index {
           this.ProfilePage()
         }
         Row() {
-          this.TabButton(0, '⌂', '首页')
+          this.TabButton(0, '🏠', '首页')
           this.TabButton(1, '📋', '计划')
           this.TabButton(2, '📚', '学习')
-          this.TabButton(3, '◉', '专注')
+          this.TabButton(3, '⏱️', '专注')
           this.TabButton(4, '🌱', '成长')
           this.TabButton(5, '👤', '我的')
         }
