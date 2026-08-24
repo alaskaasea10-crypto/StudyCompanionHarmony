@@ -1,3 +1,5 @@
+import { preferences } from '@kit.ArkData';
+
 interface StudyTask {
   title: string;
   subject: string;
@@ -8,6 +10,19 @@ interface StudyTask {
 @Entry
 @Component
 struct Index {
+  @State profileLoaded: boolean = false;
+  @State profileCompleted: boolean = false;
+  @State profileName: string = '小林';
+  @State profileGrade: string = '大二';
+  @State profileMajor: string = '计算机科学与技术';
+  @State profileGoal: string = '期末复习';
+  @State profileSubject: string = '线性代数';
+  @State profileExamDate: string = '';
+  @State profileDailyMinutes: number = 60;
+  @State profilePreferredTime: string = '晚间';
+  @State profileLearningStyle: string = '练习驱动';
+  @State profileSupportStyle: string = '温和陪伴';
+  @State setupScheduleReady: boolean = false;
   @State currentTab: number = 0;
   @State tasks: StudyTask[] = [
     { title: '回顾矩阵运算规则', subject: '线性代数', minutes: 25, completed: false },
@@ -24,9 +39,169 @@ struct Index {
   @State newTaskTitle: string = '';
   @State energyState: string = '一般';
   private timerId: number = -1;
+  private profileStore?: preferences.Preferences;
+
+  aboutToAppear(): void {
+    this.loadProfile();
+  }
 
   aboutToDisappear(): void {
     this.stopTimer();
+  }
+
+  private futureDate(days: number): string {
+    const date: Date = new Date();
+    date.setDate(date.getDate() + days);
+    const year: number = date.getFullYear();
+    const month: string = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day: string = date.getDate().toString().padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private examDays(): number {
+    const examTime: number = new Date(`${this.profileExamDate}T00:00:00+08:00`).getTime();
+    if (Number.isNaN(examTime)) {
+      return 14;
+    }
+    const now: Date = new Date();
+    const todayTime: number = new Date(
+      `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}T00:00:00+08:00`
+    ).getTime();
+    return Math.max(0, Math.ceil((examTime - todayTime) / 86400000));
+  }
+
+  private async ensureProfileStore(): Promise<preferences.Preferences> {
+    if (this.profileStore === undefined) {
+      this.profileStore = await preferences.getPreferences(getContext(this), 'learner_profile');
+    }
+    return this.profileStore;
+  }
+
+  private async loadProfile(): Promise<void> {
+    const defaultExamDate: string = this.futureDate(14);
+    try {
+      const store: preferences.Preferences = await this.ensureProfileStore();
+      this.profileCompleted = await store.get('completed', false) as boolean;
+      this.profileName = await store.get('name', '小林') as string;
+      this.profileGrade = await store.get('grade', '大二') as string;
+      this.profileMajor = await store.get('major', '计算机科学与技术') as string;
+      this.profileGoal = await store.get('goal', '期末复习') as string;
+      this.profileSubject = await store.get('subject', '线性代数') as string;
+      this.profileExamDate = await store.get('examDate', defaultExamDate) as string;
+      this.profileDailyMinutes = await store.get('dailyMinutes', 60) as number;
+      this.profilePreferredTime = await store.get('preferredTime', '晚间') as string;
+      this.profileLearningStyle = await store.get('learningStyle', '练习驱动') as string;
+      this.profileSupportStyle = await store.get('supportStyle', '温和陪伴') as string;
+      this.setupScheduleReady = await store.get('scheduleReady', false) as boolean;
+    } catch (error) {
+      this.profileCompleted = false;
+      this.profileExamDate = defaultExamDate;
+    }
+    this.profileLoaded = true;
+    if (this.profileCompleted) {
+      this.applyProfileToTasks();
+    }
+  }
+
+  private applyProfileToTasks(): void {
+    const primaryMinutes: number = Math.min(25, Math.max(10, this.profileDailyMinutes));
+    this.tasks = [
+      {
+        title: `回顾${this.profileSubject}核心知识点`,
+        subject: this.profileSubject,
+        minutes: primaryMinutes,
+        completed: false
+      },
+      {
+        title: `完成${this.profileSubject}练习`,
+        subject: this.profileSubject,
+        minutes: Math.min(30, Math.max(15, this.profileDailyMinutes - primaryMinutes)),
+        completed: false
+      },
+      {
+        title: `${this.profileSubject}基础小测`,
+        subject: this.profileSubject,
+        minutes: 10,
+        completed: false
+      },
+      {
+        title: '复习今日课堂笔记',
+        subject: '今日课程',
+        minutes: 20,
+        completed: false
+      }
+    ];
+    this.currentTaskIndex = 0;
+    this.focusMinutes = primaryMinutes;
+    this.remainingSeconds = primaryMinutes * 60;
+  }
+
+  private async saveProfile(): Promise<void> {
+    if (this.profileName.trim().length === 0 || this.profileMajor.trim().length === 0 ||
+      this.profileSubject.trim().length === 0 || this.profileExamDate.trim().length === 0) {
+      return;
+    }
+    const store: preferences.Preferences = await this.ensureProfileStore();
+    await store.put('completed', true);
+    await store.put('name', this.profileName.trim());
+    await store.put('grade', this.profileGrade);
+    await store.put('major', this.profileMajor.trim());
+    await store.put('goal', this.profileGoal);
+    await store.put('subject', this.profileSubject.trim());
+    await store.put('examDate', this.profileExamDate.trim());
+    await store.put('dailyMinutes', this.profileDailyMinutes);
+    await store.put('preferredTime', this.profilePreferredTime);
+    await store.put('learningStyle', this.profileLearningStyle);
+    await store.put('supportStyle', this.profileSupportStyle);
+    await store.put('scheduleReady', this.setupScheduleReady);
+    await store.flush();
+    this.applyProfileToTasks();
+    this.profileCompleted = true;
+    this.currentTab = 0;
+  }
+
+  private async resetProfile(): Promise<void> {
+    this.stopTimer();
+    const store: preferences.Preferences = await this.ensureProfileStore();
+    await store.put('completed', false);
+    await store.flush();
+    this.profileCompleted = false;
+    this.currentTab = 0;
+  }
+
+  private choiceValue(group: string): string {
+    if (group === 'grade') {
+      return this.profileGrade;
+    }
+    if (group === 'goal') {
+      return this.profileGoal;
+    }
+    if (group === 'time') {
+      return this.profilePreferredTime;
+    }
+    if (group === 'style') {
+      return this.profileLearningStyle;
+    }
+    if (group === 'support') {
+      return this.profileSupportStyle;
+    }
+    return this.profileDailyMinutes.toString();
+  }
+
+  private setChoice(group: string, value: string): void {
+    if (group === 'grade') {
+      this.profileGrade = value;
+    } else if (group === 'goal') {
+      this.profileGoal = value;
+    } else if (group === 'time') {
+      this.profilePreferredTime = value;
+    } else if (group === 'style') {
+      this.profileLearningStyle = value;
+    } else if (group === 'support') {
+      this.profileSupportStyle = value;
+    } else {
+      this.profileDailyMinutes = Number(value);
+    }
   }
 
   private completedCount(): number {
@@ -130,6 +305,175 @@ struct Index {
   }
 
   @Builder
+  ChoiceChip(group: string, value: string, label: string) {
+    Text(label)
+      .fontSize(13)
+      .fontWeight(this.choiceValue(group) === value ? FontWeight.Bold : FontWeight.Normal)
+      .fontColor(this.choiceValue(group) === value ? Color.White : '#5F6478')
+      .backgroundColor(this.choiceValue(group) === value ? '#5B5FEF' : '#F0F1F6')
+      .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+      .borderRadius(18)
+      .onClick(() => {
+        this.setChoice(group, value);
+      })
+  }
+
+  @Builder
+  SetupSection(number: string, title: string, subtitle: string) {
+    Row({ space: 12 }) {
+      Text(number)
+        .width(32).height(32).textAlign(TextAlign.Center)
+        .fontSize(14).fontWeight(FontWeight.Bold).fontColor(Color.White)
+        .backgroundColor('#5B5FEF').borderRadius(16)
+      Column({ space: 3 }) {
+        Text(title).width('100%').fontSize(17).fontWeight(FontWeight.Bold).fontColor('#25283A')
+        Text(subtitle).width('100%').fontSize(12).fontColor('#9397A9')
+      }
+      .layoutWeight(1)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  LoadingPage() {
+    Column({ space: 16 }) {
+      Text('✦').fontSize(42).fontColor('#5B5FEF')
+      Text('正在读取学习画像').fontSize(19).fontWeight(FontWeight.Bold).fontColor('#25283A')
+      Text('学伴正在准备你的个性化学习空间').fontSize(13).fontColor('#9397A9')
+    }
+    .width('100%').height('100%').justifyContent(FlexAlign.Center).backgroundColor('#F6F7FC')
+  }
+
+  @Builder
+  SetupPage() {
+    Scroll() {
+      Column({ space: 18 }) {
+        Column({ space: 7 }) {
+          Text('✦ 第一次见面').width('100%').fontSize(14).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
+          Text('先让学伴认识你').width('100%').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#202235')
+          Text('这些信息只保存在本机，用来生成符合你真实情况的建议。以后可以在“我的”里重新设置。')
+            .width('100%').fontSize(14).fontColor('#777C90').lineHeight(22)
+        }
+        .width('100%').padding({ top: 10, bottom: 4 })
+
+        Column({ space: 14 }) {
+          this.SetupSection('1', '基本信息', '称呼、年级与专业')
+          TextInput({ placeholder: '希望学伴怎么称呼你', text: this.profileName })
+            .width('100%').height(48).backgroundColor('#F6F7FB').borderRadius(14)
+            .onChange((value: string) => {
+              this.profileName = value;
+            })
+          Row({ space: 8 }) {
+            this.ChoiceChip('grade', '大一', '大一')
+            this.ChoiceChip('grade', '大二', '大二')
+            this.ChoiceChip('grade', '大三', '大三')
+            this.ChoiceChip('grade', '大四', '大四')
+          }
+          .width('100%')
+          TextInput({ placeholder: '例如：计算机科学与技术', text: this.profileMajor })
+            .width('100%').height(48).backgroundColor('#F6F7FB').borderRadius(14)
+            .onChange((value: string) => {
+              this.profileMajor = value;
+            })
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Column({ space: 14 }) {
+          this.SetupSection('2', '导入课表', '让 Agent 找到真正可用的学习时间')
+          Row() {
+            Column({ space: 4 }) {
+              Text(this.setupScheduleReady ? '演示课表已就绪' : '暂未导入课表')
+                .width('100%').fontSize(15).fontWeight(FontWeight.Bold)
+              Text(this.setupScheduleReady ? '周一至周五课程已加入时间感知' : '现在可先使用演示课表，之后再接入 OCR')
+                .width('100%').fontSize(12).fontColor('#9397A9')
+            }
+            .layoutWeight(1)
+            Button(this.setupScheduleReady ? '已导入' : '使用演示课表')
+              .height(38).fontSize(12)
+              .fontColor(this.setupScheduleReady ? '#218764' : Color.White)
+              .backgroundColor(this.setupScheduleReady ? '#E5F7F0' : '#5B5FEF')
+              .onClick(() => {
+                this.setupScheduleReady = true;
+              })
+          }
+          .width('100%').padding(14).backgroundColor('#F6F7FB').borderRadius(16)
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Column({ space: 14 }) {
+          this.SetupSection('3', '最近目标', '科目、考试日期与目标类型')
+          Row({ space: 8 }) {
+            this.ChoiceChip('goal', '期末复习', '期末复习')
+            this.ChoiceChip('goal', '考研准备', '考研准备')
+            this.ChoiceChip('goal', '能力提升', '能力提升')
+          }
+          .width('100%')
+          TextInput({ placeholder: '当前最重要的科目', text: this.profileSubject })
+            .width('100%').height(48).backgroundColor('#F6F7FB').borderRadius(14)
+            .onChange((value: string) => {
+              this.profileSubject = value;
+            })
+          TextInput({ placeholder: '考试日期，例如 2026-09-07', text: this.profileExamDate })
+            .width('100%').height(48).backgroundColor('#F6F7FB').borderRadius(14)
+            .onChange((value: string) => {
+              this.profileExamDate = value;
+            })
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Column({ space: 14 }) {
+          this.SetupSection('4', '学习节奏', '每天能学多久、什么时候更舒服')
+          Row({ space: 8 }) {
+            this.ChoiceChip('minutes', '30', '30分钟')
+            this.ChoiceChip('minutes', '60', '60分钟')
+            this.ChoiceChip('minutes', '90', '90分钟')
+            this.ChoiceChip('minutes', '120', '120分钟')
+          }
+          .width('100%')
+          Row({ space: 8 }) {
+            this.ChoiceChip('time', '清晨', '清晨')
+            this.ChoiceChip('time', '午后', '午后')
+            this.ChoiceChip('time', '晚间', '晚间')
+            this.ChoiceChip('time', '不固定', '不固定')
+          }
+          .width('100%')
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Column({ space: 14 }) {
+          this.SetupSection('5', '学习偏好', '决定 Agent 如何安排和陪伴你')
+          Text('计划方式').width('100%').fontSize(13).fontColor('#777C90')
+          Row({ space: 8 }) {
+            this.ChoiceChip('style', '练习驱动', '练习驱动')
+            this.ChoiceChip('style', '理解优先', '理解优先')
+            this.ChoiceChip('style', '稳步推进', '稳步推进')
+          }
+          .width('100%')
+          Text('陪伴方式').width('100%').fontSize(13).fontColor('#777C90')
+          Row({ space: 8 }) {
+            this.ChoiceChip('support', '温和陪伴', '温和陪伴')
+            this.ChoiceChip('support', '直接督促', '直接督促')
+            this.ChoiceChip('support', '只在需要时提醒', '低打扰')
+          }
+          .width('100%')
+        }
+        .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Button('生成我的第一条主动建议')
+          .width('100%').height(52).fontSize(16).fontWeight(FontWeight.Bold)
+          .backgroundColor('#5B5FEF').borderRadius(18)
+          .onClick(() => {
+            this.saveProfile();
+          })
+        Text('你可以随时在“我的 → 重新设置学习画像”中修改')
+          .width('100%').textAlign(TextAlign.Center).fontSize(12).fontColor('#A1A5B5')
+      }
+      .width('100%').padding({ left: 20, right: 20, top: 20, bottom: 32 })
+    }
+    .width('100%').height('100%').backgroundColor('#F6F7FC')
+  }
+
+  @Builder
   TabButton(index: number, icon: string, title: string) {
     Column({ space: 3 }) {
       Text(icon).fontSize(21)
@@ -193,7 +537,7 @@ struct Index {
       Column({ space: 18 }) {
         Row() {
           Column({ space: 4 }) {
-            Text('上午好，小林').fontSize(26).fontWeight(FontWeight.Bold).fontColor('#202235')
+            Text(`上午好，${this.profileName}`).fontSize(26).fontWeight(FontWeight.Bold).fontColor('#202235')
             Text('今天从一件小事开始').fontSize(15).fontColor('#8B90A5')
           }
           .alignItems(HorizontalAlign.Start)
@@ -215,12 +559,12 @@ struct Index {
           .width('100%')
           Text(`现在最值得做：${this.tasks[0].title}`)
             .width('100%').fontSize(22).fontWeight(FontWeight.Bold).fontColor('#202235')
-          Text(`结合考试日期、今日课表和你“${this.energyState}”的状态，先完成一个${this.tasks[0].minutes}分钟的小目标。`)
+          Text(`按照你“${this.profileGoal} · ${this.profileLearningStyle}”的画像，结合考试日期、今日课表和“${this.energyState}”的状态，先完成一个${this.tasks[0].minutes}分钟的小目标。`)
             .width('100%').fontSize(15).fontColor('#666C82').lineHeight(23)
           Row({ space: 8 }) {
             Text(`⏱ ${this.tasks[0].minutes}分钟`).fontSize(13).fontColor('#555A70')
-            Text('📘 线性代数').fontSize(13).fontColor('#555A70')
-            Text('🎯 还有14天').fontSize(13).fontColor('#555A70')
+            Text(`📘 ${this.profileSubject}`).fontSize(13).fontColor('#555A70')
+            Text(`🎯 还有${this.examDays()}天`).fontSize(13).fontColor('#555A70')
           }
           .width('100%')
           Button(`开始 ${this.tasks[0].minutes} 分钟`)
@@ -302,9 +646,13 @@ struct Index {
         }
         .width('100%')
         Row() {
-          Text('线性代数考试').fontSize(15).fontWeight(FontWeight.Bold)
+          Column({ space: 3 }) {
+            Text(`${this.profileSubject}考试`).width('100%').fontSize(15).fontWeight(FontWeight.Bold)
+            Text(this.profileExamDate).width('100%').fontSize(12).fontColor('#A26B4E')
+          }
+          .layoutWeight(1)
           Blank()
-          Text('还有14天').fontSize(13).fontColor('#E06B3C')
+          Text(`还有${this.examDays()}天`).fontSize(13).fontColor('#E06B3C')
         }
         .width('100%').padding(16).backgroundColor('#FFF2E8').borderRadius(16)
         ForEach(this.tasks, (task: StudyTask, index: number) => {
@@ -400,12 +748,12 @@ struct Index {
       Column({ space: 18 }) {
         this.PageHeader('👤', '我的', '学习画像 · 数据与隐私')
         Row({ space: 14 }) {
-          Text('林')
+          Text(this.profileName.length > 0 ? this.profileName.substring(0, 1) : '学')
             .fontSize(24).fontWeight(FontWeight.Bold).fontColor(Color.White)
             .width(58).height(58).textAlign(TextAlign.Center).backgroundColor('#5B5FEF').borderRadius(29)
           Column({ space: 5 }) {
-            Text('小林').fontSize(20).fontWeight(FontWeight.Bold)
-            Text('大二 · 计算机科学与技术').fontSize(13).fontColor('#8B90A5')
+            Text(this.profileName).fontSize(20).fontWeight(FontWeight.Bold)
+            Text(`${this.profileGrade} · ${this.profileMajor}`).fontSize(13).fontColor('#8B90A5')
           }
           .alignItems(HorizontalAlign.Start)
         }
@@ -415,19 +763,31 @@ struct Index {
           Row() {
             Text('当前目标').fontSize(14).fontColor('#8B90A5')
             Blank()
-            Text('期末复习').fontSize(14).fontWeight(FontWeight.Medium)
+            Text(this.profileGoal).fontSize(14).fontWeight(FontWeight.Medium)
           }
           .width('100%')
           Row() {
             Text('学习方式').fontSize(14).fontColor('#8B90A5')
             Blank()
-            Text('练习驱动').fontSize(14).fontWeight(FontWeight.Medium)
+            Text(this.profileLearningStyle).fontSize(14).fontWeight(FontWeight.Medium)
           }
           .width('100%')
           Row() {
             Text('每日可用时间').fontSize(14).fontColor('#8B90A5')
             Blank()
-            Text('60分钟').fontSize(14).fontWeight(FontWeight.Medium)
+            Text(`${this.profileDailyMinutes}分钟 · ${this.profilePreferredTime}`).fontSize(14).fontWeight(FontWeight.Medium)
+          }
+          .width('100%')
+          Row() {
+            Text('当前科目').fontSize(14).fontColor('#8B90A5')
+            Blank()
+            Text(this.profileSubject).fontSize(14).fontWeight(FontWeight.Medium)
+          }
+          .width('100%')
+          Row() {
+            Text('考试日期').fontSize(14).fontColor('#8B90A5')
+            Blank()
+            Text(`${this.profileExamDate} · ${this.examDays()}天`).fontSize(14).fontWeight(FontWeight.Medium)
           }
           .width('100%')
         }
@@ -444,6 +804,9 @@ struct Index {
         .width('100%').padding(20).backgroundColor(Color.White).borderRadius(20)
         Button('重新设置学习画像')
           .width('100%').height(46).fontColor('#5B5FEF').backgroundColor('#ECEBFF')
+          .onClick(() => {
+            this.resetProfile();
+          })
       }
       .width('100%').padding(20)
     }
@@ -451,25 +814,31 @@ struct Index {
   }
 
   build() {
-    Column() {
-      if (this.currentTab === 0) {
-        this.HomePage()
-      } else if (this.currentTab === 1) {
-        this.PlanPage()
-      } else if (this.currentTab === 2) {
-        this.FocusPage()
-      } else {
-        this.ProfilePage()
+    if (!this.profileLoaded) {
+      this.LoadingPage()
+    } else if (!this.profileCompleted) {
+      this.SetupPage()
+    } else {
+      Column() {
+        if (this.currentTab === 0) {
+          this.HomePage()
+        } else if (this.currentTab === 1) {
+          this.PlanPage()
+        } else if (this.currentTab === 2) {
+          this.FocusPage()
+        } else {
+          this.ProfilePage()
+        }
+        Row() {
+          this.TabButton(0, '⌂', '首页')
+          this.TabButton(1, '📋', '计划')
+          this.TabButton(2, '◉', '专注')
+          this.TabButton(3, '👤', '我的')
+        }
+        .width('100%').height(72).backgroundColor(Color.White)
+        .borderRadius({ topLeft: 22, topRight: 22 })
       }
-      Row() {
-        this.TabButton(0, '⌂', '首页')
-        this.TabButton(1, '📋', '计划')
-        this.TabButton(2, '◉', '专注')
-        this.TabButton(3, '👤', '我的')
-      }
-      .width('100%').height(72).backgroundColor(Color.White)
-      .borderRadius({ topLeft: 22, topRight: 22 })
+      .width('100%').height('100%').backgroundColor('#F6F7FC')
     }
-    .width('100%').height('100%').backgroundColor('#F6F7FC')
   }
 }
