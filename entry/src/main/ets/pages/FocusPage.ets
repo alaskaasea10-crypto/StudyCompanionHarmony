@@ -6,6 +6,7 @@ export struct FocusPageView {
   @Prop isRunning: boolean = false;
   @Prop shadowPulse: number = 1;
   @Prop todayTimeText: string = '0分钟';
+  @Prop todayFocusSessionCount: number = 0;
   onPause: () => void = () => {};
   onContinue: () => void = () => {};
   onRestart: () => void = () => {};
@@ -76,8 +77,9 @@ export struct FocusPageView {
           }
           .layoutWeight(1)
           Column({ space: 5 }) {
-            Text('共同专注').fontSize(12).fontColor('#AAA6CB')
-            Text('3个学习影子').fontSize(19).fontColor(Color.White).fontWeight(FontWeight.Bold)
+            Text('完成轮次').fontSize(12).fontColor('#AAA6CB')
+            Text(`${this.todayFocusSessionCount}轮`).fontSize(19).fontColor(Color.White)
+              .fontWeight(FontWeight.Bold)
           }
           .layoutWeight(1)
         }

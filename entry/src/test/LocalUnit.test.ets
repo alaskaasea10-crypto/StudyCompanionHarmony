@@ -1,7 +1,15 @@
 import { describe, expect, it } from '@ohos/hypium';
-import { createDemoSchedule, createDemoTasks, StudyTask } from '../main/ets/models/StudyModels';
+import {
+  createDemoSchedule,
+  createDemoTasks,
+  FocusRecord,
+  QuizAttempt,
+  StudyMetrics,
+  StudyTask
+} from '../main/ets/models/StudyModels';
 import { FocusClock } from '../main/ets/services/FocusClock';
 import { RecommendationResult, RecommendationService } from '../main/ets/services/RecommendationService';
+import { StudyDataCenter } from '../main/ets/services/StudyDataCenter';
 import { TodayPlanResult, TodayPlanService } from '../main/ets/services/TodayPlanService';
 
 export default function localUnitTest() {
@@ -60,6 +68,42 @@ export default function localUnitTest() {
       });
       expect(result.allDone).assertTrue();
       expect(result.minutes).assertEqual(0);
+    });
+
+    it('aggregatesTasksFocusAndQuizFromOneDay', 0, () => {
+      const tasks: StudyTask[] = createDemoTasks('线性代数', 60);
+      tasks[0].completed = true;
+      const focusRecords: FocusRecord[] = [{
+        id: 'focus-test',
+        taskId: tasks[0].id ?? 'task-test',
+        taskTitle: tasks[0].title,
+        subject: tasks[0].subject,
+        plannedMinutes: 25,
+        elapsedSeconds: 1500,
+        completedAt: 1000,
+        dayKey: '2026-08-28'
+      }];
+      const quizAttempts: QuizAttempt[] = [{
+        id: 'quiz-test',
+        questionId: 'matrix-invertible-01',
+        subject: '线性代数',
+        answer: 'B',
+        correct: true,
+        attemptedAt: 1000,
+        dayKey: '2026-08-28'
+      }];
+      const metrics: StudyMetrics = StudyDataCenter.calculateMetrics(
+        tasks,
+        focusRecords,
+        quizAttempts,
+        '2026-08-28',
+        0
+      );
+      expect(metrics.completedTaskCount).assertEqual(1);
+      expect(metrics.planProgress).assertEqual(25);
+      expect(metrics.todayFocusMinutes).assertEqual(25);
+      expect(metrics.todayFocusSessionCount).assertEqual(1);
+      expect(metrics.quizCorrectCount).assertEqual(1);
     });
   });
 }

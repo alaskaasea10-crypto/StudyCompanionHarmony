@@ -13,6 +13,12 @@ export struct ProfilePageView {
   @Prop profileExamDate: string = '';
   @Prop examDays: number = 0;
   @Prop energyState: string = '';
+  @Prop todayTimeText: string = '0分钟';
+  @Prop completedTaskCount: number = 0;
+  @Prop totalTaskCount: number = 0;
+  @Prop planProgress: number = 0;
+  @Prop quizAttemptCount: number = 0;
+  @Prop quizCorrectCount: number = 0;
   onEnergyChange: (value: string) => void = () => {};
   onResetProfile: () => void = () => {};
 
@@ -71,6 +77,28 @@ export struct ProfilePageView {
             Blank()
             Text(`${this.profileExamDate} · ${this.examDays}天`).fontSize(14).fontWeight(FontWeight.Medium)
           }.width('100%')
+        }
+        .width('100%').padding(20).backgroundColor(Color.White).borderRadius(20)
+        Column({ space: 13 }) {
+          Text('学习数据').width('100%').fontSize(17).fontWeight(FontWeight.Bold)
+          Row({ space: 10 }) {
+            Column({ space: 5 }) {
+              Text(this.todayTimeText).fontSize(19).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
+              Text('今日专注').fontSize(11).fontColor('#9397A9')
+            }.layoutWeight(1).padding(13).backgroundColor('#F4F3FF').borderRadius(14)
+            Column({ space: 5 }) {
+              Text(`${this.completedTaskCount}/${this.totalTaskCount}`).fontSize(19)
+                .fontWeight(FontWeight.Bold).fontColor('#22A879')
+              Text(`任务完成 · ${this.planProgress}%`).fontSize(11).fontColor('#9397A9')
+            }.layoutWeight(1).padding(13).backgroundColor('#ECF9F4').borderRadius(14)
+            Column({ space: 5 }) {
+              Text(`${this.quizCorrectCount}/${this.quizAttemptCount}`).fontSize(19)
+                .fontWeight(FontWeight.Bold).fontColor('#D06A48')
+              Text('今日测验答对').fontSize(11).fontColor('#9397A9')
+            }.layoutWeight(1).padding(13).backgroundColor('#FFF3EC').borderRadius(14)
+          }.width('100%')
+          Text('以上数据由任务、番茄钟和测验结果实时汇总，并保存在本机。')
+            .width('100%').fontSize(11).fontColor('#9397A9')
         }
         .width('100%').padding(20).backgroundColor(Color.White).borderRadius(20)
         Column({ space: 13 }) {

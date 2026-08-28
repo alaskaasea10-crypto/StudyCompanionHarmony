@@ -11,12 +11,16 @@ import { ProfileSetupPageView } from './ProfileSetupPage';
 import {
   createDemoSchedule,
   createDemoTasks,
+  FocusRecord,
+  QuizAttempt,
   ScheduleItem,
+  StudyMetrics,
   StudyStateSnapshot,
   StudyTask
 } from '../models/StudyModels';
 import { FocusClock } from '../services/FocusClock';
 import { RecommendationResult, RecommendationService } from '../services/RecommendationService';
+import { StudyDataCenter } from '../services/StudyDataCenter';
 import { StudyRepository } from '../services/StudyRepository';
 import { TodayPlanResult, TodayPlanService } from '../services/TodayPlanService';
 
@@ -55,6 +59,8 @@ struct Index {
   @State agentGenerated: boolean = false;
   @State quizChoice: string = '';
   @State quizSubmitted: boolean = false;
+  @State focusRecords: FocusRecord[] = [];
+  @State quizAttempts: QuizAttempt[] = [];
   @State showRecommendationDetails: boolean = false;
   @State squadMessage: string = '小队成员正在安静共学';
   private timerId: number = -1;
@@ -131,6 +137,7 @@ struct Index {
     this.setupScheduleReady = snapshot.setupScheduleReady;
     this.tasks = snapshot.tasks.length > 0 ? snapshot.tasks : createDemoTasks(snapshot.profileSubject,
       snapshot.profileDailyMinutes);
+    this.tasks = StudyDataCenter.normalizeTasks(this.tasks);
     this.scheduleItems = snapshot.scheduleItems.length > 0 ? snapshot.scheduleItems : createDemoSchedule();
     this.currentTaskIndex = Math.min(Math.max(0, snapshot.currentTaskIndex), this.tasks.length - 1);
     this.focusMinutes = snapshot.focusMinutes;
@@ -146,10 +153,14 @@ struct Index {
     this.agentGenerated = snapshot.agentGenerated;
     this.quizChoice = snapshot.quizChoice;
     this.quizSubmitted = snapshot.quizSubmitted;
+    this.focusRecords = Array.isArray(snapshot.focusRecords) ? snapshot.focusRecords : [];
+    this.quizAttempts = Array.isArray(snapshot.quizAttempts) ? snapshot.quizAttempts : [];
+    this.squadMessage = snapshot.squadMessage ?? '小队成员正在安静共学';
   }
 
   private snapshot(): StudyStateSnapshot {
     return {
+      schemaVersion: 2,
       profileCompleted: this.profileCompleted,
       profileName: this.profileName,
       profileGrade: this.profileGrade,
@@ -177,7 +188,10 @@ struct Index {
       agentInput: this.agentInput,
       agentGenerated: this.agentGenerated,
       quizChoice: this.quizChoice,
-      quizSubmitted: this.quizSubmitted
+      quizSubmitted: this.quizSubmitted,
+      focusRecords: this.focusRecords,
+      quizAttempts: this.quizAttempts,
+      squadMessage: this.squadMessage
     };
   }
 
@@ -288,7 +302,11 @@ struct Index {
   }
 
   private completedCount(): number {
-    return this.tasks.filter((task: StudyTask) => task.completed).length;
+    return this.studyMetrics().completedTaskCount;
+  }
+
+  private studyMetrics(): StudyMetrics {
+    return StudyDataCenter.metrics(this.snapshot());
   }
 
   private currentTask(): StudyTask {
@@ -297,11 +315,12 @@ struct Index {
   }
 
   private todayTimeText(): string {
-    if (this.todayMinutes < 60) {
-      return `${this.todayMinutes}分钟`;
+    const todayFocusMinutes: number = this.studyMetrics().todayFocusMinutes;
+    if (todayFocusMinutes < 60) {
+      return `${todayFocusMinutes}分钟`;
     }
-    const hour: number = Math.floor(this.todayMinutes / 60);
-    const minute: number = this.todayMinutes % 60;
+    const hour: number = Math.floor(todayFocusMinutes / 60);
+    const minute: number = todayFocusMinutes % 60;
     return `${hour}小时${minute}分钟`;
   }
 
@@ -425,6 +444,14 @@ struct Index {
     this.remainingSeconds = 0;
     if (!this.focusSessionCredited) {
       this.todayMinutes += FocusClock.completedMinutes(this.focusElapsedSeconds);
+      this.focusRecords = this.focusRecords.concat([
+        StudyDataCenter.createFocusRecord(
+          this.tasks[this.currentTaskIndex],
+          this.focusMinutes,
+          this.focusElapsedSeconds,
+          this.studyDayKey
+        )
+      ]);
       this.focusSessionCredited = true;
     }
     if (!this.tasks[this.currentTaskIndex].completed) {
@@ -437,10 +464,14 @@ struct Index {
     this.tasks = this.tasks.map((task: StudyTask, taskIndex: number) => {
       if (taskIndex === index) {
         return {
+          id: task.id,
           title: task.title,
           subject: task.subject,
           minutes: task.minutes,
-          completed: completed
+          completed: completed,
+          source: task.source,
+          createdAt: task.createdAt,
+          completedAt: completed ? Date.now() : 0
         };
       }
       return task;
@@ -454,10 +485,14 @@ struct Index {
       return;
     }
     this.tasks = this.tasks.concat([{
+      id: `manual-${Date.now()}`,
       title: title,
       subject: '自定义任务',
       minutes: 25,
-      completed: false
+      completed: false,
+      source: 'manual',
+      createdAt: Date.now(),
+      completedAt: 0
     }]);
     this.newTaskTitle = '';
     this.persistSilently();
@@ -467,7 +502,7 @@ struct Index {
     const text: string = this.agentInput.trim();
     const result: TodayPlanResult = TodayPlanService.generate(text, this.profileSubject, this.profileDailyMinutes);
     this.profileSubject = result.subject;
-    this.tasks = result.tasks;
+    this.tasks = StudyDataCenter.normalizeTasks(result.tasks);
     this.currentTaskIndex = 0;
     this.focusMinutes = result.firstFocusMinutes;
     this.remainingSeconds = result.firstFocusMinutes * 60;
@@ -480,17 +515,25 @@ struct Index {
   }
 
   private planProgress(): number {
-    if (this.tasks.length === 0) {
-      return 0;
-    }
-    return Math.round(this.completedCount() * 100 / this.tasks.length);
+    return this.studyMetrics().planProgress;
   }
 
   private submitQuiz(): void {
     if (this.quizChoice.length === 0) {
       return;
     }
+    if (this.quizSubmitted) {
+      return;
+    }
     this.quizSubmitted = true;
+    this.quizAttempts = this.quizAttempts.concat([
+      StudyDataCenter.createQuizAttempt(
+        this.profileSubject,
+        this.quizChoice,
+        this.quizChoice === 'B',
+        this.studyDayKey
+      )
+    ]);
     if (this.quizChoice === 'B') {
       const quizIndex: number = this.tasks.findIndex((task: StudyTask) => task.title.includes('小测'));
       if (quizIndex >= 0) {
@@ -501,10 +544,14 @@ struct Index {
       const reviewExists: boolean = this.tasks.some((task: StudyTask) => task.title === reviewTitle);
       if (!reviewExists) {
         this.tasks = this.tasks.concat([{
+          id: `quiz-review-${Date.now()}`,
           title: reviewTitle,
           subject: this.profileSubject,
           minutes: 10,
-          completed: false
+          completed: false,
+          source: 'quiz-feedback',
+          createdAt: Date.now(),
+          completedAt: 0
         }]);
       }
     }
@@ -618,6 +665,8 @@ struct Index {
             planProgress: this.planProgress(),
             quizChoice: this.quizChoice,
             quizSubmitted: this.quizSubmitted,
+            quizAttemptCount: this.studyMetrics().quizAttemptCount,
+            quizCorrectCount: this.studyMetrics().quizCorrectCount,
             onAgentInputChange: (value: string) => {
               this.agentInput = value;
             },
@@ -640,6 +689,7 @@ struct Index {
             isRunning: this.isRunning,
             shadowPulse: this.shadowPulse,
             todayTimeText: this.todayTimeText(),
+            todayFocusSessionCount: this.studyMetrics().todayFocusSessionCount,
             onPause: () => {
               this.pauseFocus();
             },
@@ -659,8 +709,16 @@ struct Index {
           })
         } else if (this.currentTab === 4) {
           GrowthPageView({
+            profileName: this.profileName,
             profileSubject: this.profileSubject,
+            profileGoal: this.profileGoal,
             todayTimeText: this.todayTimeText(),
+            completedTaskCount: this.studyMetrics().completedTaskCount,
+            totalTaskCount: this.studyMetrics().totalTaskCount,
+            planProgress: this.studyMetrics().planProgress,
+            todayFocusSessionCount: this.studyMetrics().todayFocusSessionCount,
+            quizAttemptCount: this.studyMetrics().quizAttemptCount,
+            quizCorrectCount: this.studyMetrics().quizCorrectCount,
             isRunning: this.isRunning,
             squadMessage: this.squadMessage,
             onEnterShadow: () => {
@@ -671,6 +729,7 @@ struct Index {
             },
             onSquadMessageChange: (message: string) => {
               this.squadMessage = message;
+              this.persistSilently();
             }
           })
         } else {
@@ -686,6 +745,12 @@ struct Index {
             profileExamDate: this.profileExamDate,
             examDays: this.examDays(),
             energyState: this.energyState,
+            todayTimeText: this.todayTimeText(),
+            completedTaskCount: this.studyMetrics().completedTaskCount,
+            totalTaskCount: this.studyMetrics().totalTaskCount,
+            planProgress: this.studyMetrics().planProgress,
+            quizAttemptCount: this.studyMetrics().quizAttemptCount,
+            quizCorrectCount: this.studyMetrics().quizCorrectCount,
             onEnergyChange: (value: string) => {
               this.energyState = value;
               this.persistSilently();

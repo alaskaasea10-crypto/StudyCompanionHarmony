@@ -15,6 +15,8 @@ export struct LearningPageView {
   @Prop planProgress: number = 0;
   @Prop quizChoice: string = '';
   @Prop quizSubmitted: boolean = false;
+  @Prop quizAttemptCount: number = 0;
+  @Prop quizCorrectCount: number = 0;
   onAgentInputChange: (value: string) => void = () => {};
   onGeneratePlan: () => void = () => {};
   onQuizChoiceChange: (value: string) => void = () => {};
@@ -101,7 +103,14 @@ export struct LearningPageView {
         .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
 
         Column({ space: 12 }) {
-          Text('AI 小测 · 学 → 测 → 补').width('100%').fontSize(18).fontWeight(FontWeight.Bold)
+          Row() {
+            Text('AI 小测 · 学 → 测 → 补').fontSize(18).fontWeight(FontWeight.Bold)
+            Blank()
+            Text(this.quizAttemptCount === 0 ? '今日暂未测验' :
+              `今日答对 ${this.quizCorrectCount}/${this.quizAttemptCount}`)
+              .fontSize(11).fontColor('#5B5FEF').backgroundColor('#ECEBFF')
+              .padding({ left: 9, right: 9, top: 5, bottom: 5 }).borderRadius(12)
+          }.width('100%')
           Text('若矩阵 A 可逆，下列结论正确的是？').width('100%').fontSize(15).fontWeight(FontWeight.Medium)
           this.QuizOption('A', 'det(A)=0')
           this.QuizOption('B', 'A 的列向量线性无关')

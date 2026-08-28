@@ -2,8 +2,16 @@ import { PageHeader } from '../components/PageHeader';
 
 @Component
 export struct GrowthPageView {
+  @Prop profileName: string = '';
   @Prop profileSubject: string = '';
+  @Prop profileGoal: string = '';
   @Prop todayTimeText: string = '0分钟';
+  @Prop completedTaskCount: number = 0;
+  @Prop totalTaskCount: number = 0;
+  @Prop planProgress: number = 0;
+  @Prop todayFocusSessionCount: number = 0;
+  @Prop quizAttemptCount: number = 0;
+  @Prop quizCorrectCount: number = 0;
   @Prop isRunning: boolean = false;
   @Prop squadMessage: string = '';
   onEnterShadow: () => void = () => {};
@@ -38,24 +46,26 @@ export struct GrowthPageView {
         Column({ space: 13 }) {
           Row() {
             Column({ space: 3 }) {
-              Text(`${this.profileSubject}互助小队`).width('100%').fontSize(18).fontWeight(FontWeight.Bold)
-              Text('4人小队 · 目标一致 · 轻度竞争').width('100%').fontSize(12).fontColor('#9397A9')
+              Text(`${this.profileSubject}学习成长`).width('100%').fontSize(18).fontWeight(FontWeight.Bold)
+              Text('数据来自今日任务、番茄钟和测验记录').width('100%').fontSize(12).fontColor('#9397A9')
             }.layoutWeight(1)
-            Text('Lv.2').fontSize(12).fontColor('#A85D22').backgroundColor('#FFF1DF')
+            Text(`${this.planProgress}%`).fontSize(12).fontColor('#A85D22').backgroundColor('#FFF1DF')
               .padding({ left: 10, right: 10, top: 7, bottom: 7 }).borderRadius(13)
           }.width('100%')
-          Text(`🎯 30天完成${this.profileSubject}复习`).width('100%').fontSize(15).fontWeight(FontWeight.Bold)
+          Text(`🎯 ${this.profileGoal} · ${this.profileSubject}`).width('100%').fontSize(15).fontWeight(FontWeight.Bold)
           Row() {
-            Text('你 · 队长').layoutWeight(1).fontSize(13)
-            Text('70% · 已完成今日任务').fontSize(12).fontColor('#5B5FEF')
+            Text(`${this.profileName} · 今日任务`).layoutWeight(1).fontSize(13)
+            Text(`${this.completedTaskCount}/${this.totalTaskCount} · ${this.planProgress}%`)
+              .fontSize(12).fontColor('#5B5FEF')
           }.width('100%').padding(10).backgroundColor('#F6F7FB').borderRadius(12)
           Row() {
-            Text('小明 · 氛围官').layoutWeight(1).fontSize(13)
-            Text('55% · 正在专注').fontSize(12).fontColor('#35A982')
+            Text('🍅 今日专注').layoutWeight(1).fontSize(13)
+            Text(`${this.todayFocusSessionCount}轮 · ${this.todayTimeText}`).fontSize(12).fontColor('#35A982')
           }.width('100%').padding(10).backgroundColor('#F6F7FB').borderRadius(12)
           Row() {
-            Text('小红 · 分享者').layoutWeight(1).fontSize(13)
-            Text('40% · 还有3个任务').fontSize(12).fontColor('#D26B72')
+            Text('📝 今日测验').layoutWeight(1).fontSize(13)
+            Text(this.quizAttemptCount === 0 ? '暂未测验' :
+              `${this.quizCorrectCount}/${this.quizAttemptCount}次答对`).fontSize(12).fontColor('#D26B72')
           }.width('100%').padding(10).backgroundColor('#F6F7FB').borderRadius(12)
           Row({ space: 8 }) {
             Button('鼓励队友').layoutWeight(1).height(39).fontSize(12).backgroundColor('#5B5FEF')
@@ -69,6 +79,8 @@ export struct GrowthPageView {
               })
           }.width('100%')
           Text(this.squadMessage).width('100%').fontSize(12).fontColor('#777C90')
+          Text('多人实时数据将在接入共学服务后显示；当前不使用虚构队友进度。')
+            .width('100%').fontSize(11).fontColor('#A0A4B4')
         }
         .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
 
