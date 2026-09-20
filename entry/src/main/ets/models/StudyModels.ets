@@ -7,6 +7,19 @@ export interface StudyTask {
   source?: string;
   createdAt?: number;
   completedAt?: number;
+  goalId?: string;
+  milestoneId?: string;
+  outcome?: string;
+  focusedAt?: number;
+  submittedAt?: number;
+  verifiedAt?: number;
+  resultNote?: string;
+}
+
+export interface ActionDeferral {
+  key: string;
+  until: number;
+  kind: string;
 }
 
 export interface ScheduleItem {
@@ -18,6 +31,27 @@ export interface ScheduleItem {
   location: string;
 }
 
+export interface AcademicGoal {
+  id: string;
+  title: string;
+  type: string;
+  subject: string;
+  deadline: string;
+  estimatedMinutes: number;
+  completed: boolean;
+  createdAt: number;
+  milestones?: GoalMilestone[];
+}
+
+export interface GoalMilestone {
+  id: string;
+  title: string;
+  description: string;
+  dueDate: string;
+  minutes: number;
+  completed: boolean;
+}
+
 export interface FocusRecord {
   id: string;
   taskId: string;
@@ -27,16 +61,45 @@ export interface FocusRecord {
   elapsedSeconds: number;
   completedAt: number;
   dayKey: string;
+  completed?: boolean;
 }
 
 export interface QuizAttempt {
   id: string;
   questionId: string;
   subject: string;
+  taskId?: string;
+  knowledgePoint?: string;
   answer: string;
   correct: boolean;
   attemptedAt: number;
   dayKey: string;
+}
+
+export interface KnowledgeMastery {
+  subject: string;
+  knowledgePoint: string;
+  score: number;
+  attemptCount: number;
+  correctCount: number;
+  status: string;
+  updatedAt: number;
+}
+
+export interface SquadMember {
+  id: string;
+  name: string;
+  avatarText: string;
+  accentColor: string;
+  status: string;
+  currentTask: string;
+  todayMinutes: number;
+  streakDays: number;
+  isSelf: boolean;
+  isDemo?: boolean;
+  encouragementCount?: number;
+  taskProgress?: number;
+  lastQuietSignal?: string;
 }
 
 export interface StudyMetrics {
@@ -52,12 +115,14 @@ export interface StudyMetrics {
 export interface StudyStateSnapshot {
   schemaVersion?: number;
   profileCompleted: boolean;
+  profileAvatarUri?: string;
   profileName: string;
   profileGrade: string;
   profileMajor: string;
   profileGoal: string;
   profileSubject: string;
   profileExamDate: string;
+  profileExamDateConfirmed?: boolean;
   profileDailyMinutes: number;
   profilePreferredTime: string;
   profileLearningStyle: string;
@@ -65,6 +130,9 @@ export interface StudyStateSnapshot {
   setupScheduleReady: boolean;
   tasks: StudyTask[];
   scheduleItems: ScheduleItem[];
+  academicGoals?: AcademicGoal[];
+  actionDeferrals?: ActionDeferral[];
+  preferredTaskId?: string;
   currentTaskIndex: number;
   focusMinutes: number;
   remainingSeconds: number;
@@ -79,9 +147,76 @@ export interface StudyStateSnapshot {
   agentGenerated: boolean;
   quizChoice: string;
   quizSubmitted: boolean;
+  quizPending?: boolean;
+  quizQuestionId?: string;
+  quizFeedbackMessage?: string;
   focusRecords?: FocusRecord[];
   quizAttempts?: QuizAttempt[];
+  knowledgeMastery?: KnowledgeMastery[];
   squadMessage?: string;
+  squadMembers?: SquadMember[];
+  squadInviteCode?: string;
+  squadChallengeTitle?: string;
+  squadChallengeMinutes?: number;
+  squadChallengeJoinedCount?: number;
+  squadChallengeActive?: boolean;
+  notificationEnabled?: boolean;
+  notificationClassEnabled?: boolean;
+  notificationReviewEnabled?: boolean;
+  notificationTaskEnabled?: boolean;
+  notificationQuietHoursEnabled?: boolean;
+  notificationQuietStart?: string;
+  notificationQuietEnd?: string;
+}
+
+export function createDefaultSquadMembers(profileName: string): SquadMember[] {
+  return [
+    {
+      id: 'self',
+      name: profileName.trim().length > 0 ? profileName.trim() : '我',
+      avatarText: '我',
+      accentColor: '#5B5FEF',
+      status: '准备开始',
+      currentTask: '选择一项今日任务',
+      todayMinutes: 0,
+      streakDays: 11,
+      isSelf: true,
+      isDemo: false,
+      encouragementCount: 0,
+      taskProgress: 0,
+      lastQuietSignal: ''
+    },
+    {
+      id: 'demo-xiaoyu',
+      name: '小雨',
+      avatarText: '雨',
+      accentColor: '#35C99A',
+      status: '专注中',
+      currentTask: '复习英语听力',
+      todayMinutes: 38,
+      streakDays: 7,
+      isSelf: false,
+      isDemo: true,
+      encouragementCount: 2,
+      taskProgress: 72,
+      lastQuietSignal: ''
+    },
+    {
+      id: 'demo-azhe',
+      name: '阿哲',
+      avatarText: '哲',
+      accentColor: '#F2A65A',
+      status: '休息中',
+      currentTask: '数据结构课程设计',
+      todayMinutes: 52,
+      streakDays: 4,
+      isSelf: false,
+      isDemo: true,
+      encouragementCount: 1,
+      taskProgress: 36,
+      lastQuietSignal: ''
+    }
+  ];
 }
 
 export function createDemoTasks(subject: string, dailyMinutes: number): StudyTask[] {
@@ -110,7 +245,7 @@ export function createDemoTasks(subject: string, dailyMinutes: number): StudyTas
     },
     {
       id: `profile-quiz-${createdAt}`,
-      title: `${subject}基础小测`,
+      title: `整理${subject}学习收获`,
       subject: subject,
       minutes: 10,
       completed: false,

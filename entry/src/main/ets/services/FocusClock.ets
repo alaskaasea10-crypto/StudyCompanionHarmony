@@ -17,6 +17,6 @@ export class FocusClock {
     if (elapsedSeconds <= 0) {
       return 0;
     }
-    return Math.max(1, Math.round(elapsedSeconds / 60));
+    return Math.floor(elapsedSeconds / 60);
   }
 }

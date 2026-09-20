@@ -11,6 +11,11 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.INTERNET"
+      }
+    ],
     "abilities": [
       {
         "name": "EntryAbility",
@@ -18,7 +23,7 @@
         "description": "$string:EntryAbility_desc",
         "icon": "$media:layered_image",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:startIcon",
+        "startWindowIcon": "$media:study_planet",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "skills": [
@@ -28,6 +33,41 @@
             ],
             "actions": [
               "ohos.want.action.home"
+            ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "studycompanion",
+                "host": "action",
+                "path": "next"
+              },
+              {
+                "scheme": "studycompanion",
+                "host": "action",
+                "path": "focus"
+              },
+              {
+                "scheme": "studycompanion",
+                "host": "action",
+                "path": "schedule"
+              },
+              {
+                "scheme": "studycompanion",
+                "host": "action",
+                "path": "learning"
+              },
+              {
+                "scheme": "studycompanion",
+                "host": "action",
+                "path": "support"
+              }
             ]
           }
         ]
@@ -45,6 +85,20 @@
             "resource": "$profile:backup_config"
           }
         ],
+      },
+      {
+        "name": "StudyFormAbility",
+        "srcEntry": "./ets/studyformability/StudyFormAbility.ets",
+        "label": "$string:StudyFormAbility_label",
+        "description": "$string:StudyFormAbility_desc",
+        "type": "form",
+        "exported": true,
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:study_companion_form_config"
+          }
+        ]
       }
     ]
   }

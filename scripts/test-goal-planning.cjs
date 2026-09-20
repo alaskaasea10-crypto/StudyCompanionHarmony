@@ -1,0 +1,17 @@
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict');
+const ts=require(process.argv[2]),root=path.resolve(__dirname,'..');
+const box={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root,'entry/src/main/ets/services/GoalPlanningService.ets'),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}}).outputText,box);
+const {GoalPlanningService:g}=box.exports,now=new Date('2026-09-09T12:00:00+08:00').getTime();
+const later={id:'later',title:'课程项目',type:'项目',subject:'数据结构',deadline:'2026-09-20',estimatedMinutes:600,completed:false,createdAt:1};
+const urgent={id:'urgent',title:'线代考试',type:'考试',subject:'线性代数',deadline:'2026-09-11',estimatedMinutes:300,completed:false,createdAt:2};
+const tasks=[{title:'复习矩阵',subject:'线性代数',minutes:20,completed:false}];
+assert.equal(g.daysUntil('2026-09-11',now),2);assert.equal(g.prioritize([later,urgent],tasks,now).goal.id,'urgent');
+assert.equal(g.prioritize([{...urgent,completed:true},later],tasks,now).goal.id,'later');
+assert.equal(g.prioritize([],tasks,now),undefined);
+const decomposed=g.decompose(urgent);assert.equal(decomposed.length,4);assert.equal(decomposed[3].dueDate,'2026-09-11');
+assert.ok(decomposed.every((m,i)=>i===0||m.dueDate>=decomposed[i-1].dueDate));
+const first=g.taskFor({...urgent,milestones:decomposed},decomposed[0]);
+assert.equal(first.goalId,'urgent');assert.equal(first.milestoneId,decomposed[0].id);assert.equal(first.source,'goal-milestone');
+assert.equal(g.nextMilestone({...urgent,milestones:decomposed}).id,decomposed[0].id);
+assert.equal(g.nextMilestone({...urgent,milestones:decomposed.map((m,i)=>({...m,completed:i===0}))}).id,decomposed[1].id);
+console.log('PASS: goal deadline priority, four staged milestones, linked task, advancement and completed-goal exclusion');

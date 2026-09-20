@@ -10,7 +10,23 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "label"
+      "value": "学伴"
+    },
+    {
+      "name": "StudyFormAbility_label",
+      "value": "学伴学习卡片"
+    },
+    {
+      "name": "StudyFormAbility_desc",
+      "value": "展示今日主动建议与学习进度"
+    },
+    {
+      "name": "StudyCompanionCard_display_name",
+      "value": "星球提醒"
+    },
+    {
+      "name": "StudyCompanionCard_desc",
+      "value": "让小星球提醒你下一步，点击开始学习"
     }
   ]
 }

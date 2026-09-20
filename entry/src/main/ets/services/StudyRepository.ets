@@ -16,7 +16,11 @@ export class StudyRepository {
       if (raw.length === 0) {
         return undefined;
       }
-      return JSON.parse(raw) as StudyStateSnapshot;
+      const parsed: Object = JSON.parse(raw) as Object;
+      if (parsed === null || Array.isArray(parsed)) {
+        throw new Error('stored state is not an object');
+      }
+      return parsed as StudyStateSnapshot;
     } catch (error) {
       console.error(`StudyRepository: invalid stored state: ${error}`);
       return undefined;
@@ -29,6 +33,23 @@ export class StudyRepository {
       await this.store.flush();
     } catch (error) {
       console.error(`StudyRepository: failed to save state: ${error}`);
+    }
+  }
+
+  // 用于需要向用户确认成功的操作；保留旧 save 的兼容行为。
+  async saveChecked(snapshot: StudyStateSnapshot): Promise<void> {
+    let previous: string = '';
+    try { previous = await this.store.get(STATE_KEY, '') as string; } catch (error) {
+      throw new Error('无法读取原记录，已取消保存');
+    }
+    try {
+      await this.store.put(STATE_KEY, JSON.stringify(snapshot));
+      await this.store.flush();
+    } catch (error) {
+      try { await this.store.put(STATE_KEY, previous); await this.store.flush(); } catch (rollbackError) {
+        throw new Error('保存失败且磁盘回退未确认，请检查存储空间后重试');
+      }
+      throw new Error('保存失败，已恢复原记录');
     }
   }
 

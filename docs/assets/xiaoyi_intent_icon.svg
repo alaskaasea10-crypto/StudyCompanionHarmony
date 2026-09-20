@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 72 72">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="4" x2="64" y2="68" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7F2FF"/>
+      <stop offset="1" stop-color="#D9E3FF"/>
+    </linearGradient>
+    <radialGradient id="planet" cx="0" cy="0" r="1" gradientTransform="translate(29 24) rotate(47) scale(33)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7F2FF"/>
+      <stop offset="0.55" stop-color="#D2C8FB"/>
+      <stop offset="1" stop-color="#AAA7EF"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="12" y1="52" x2="60" y2="20" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9D8CE3"/>
+      <stop offset="1" stop-color="#E9E0FF"/>
+    </linearGradient>
+  </defs>
+  <rect width="72" height="72" fill="url(#bg)"/>
+  <ellipse cx="36" cy="37" rx="28" ry="9" transform="rotate(-20 36 37)" fill="none" stroke="#C5B8F2" stroke-width="3"/>
+  <circle cx="36" cy="34" r="20" fill="url(#planet)"/>
+  <ellipse cx="28" cy="33" rx="2" ry="2.8" fill="#50447E"/>
+  <ellipse cx="43" cy="30.5" rx="2" ry="2.8" fill="#50447E"/>
+  <ellipse cx="24" cy="38" rx="3.5" ry="1.8" fill="#F5BACB" opacity="0.7"/>
+  <ellipse cx="47" cy="36" rx="3.5" ry="1.8" fill="#F5BACB" opacity="0.7"/>
+  <path d="M33 37c2 3 5 3 7-1" fill="none" stroke="#50447E" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M10 47c-2 10 39 5 51-17" fill="none" stroke="url(#ring)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M57 9c.5 4 2.4 6 6 6.5-3.6.6-5.5 2.7-6 7-.6-4.3-2.4-6.4-6-7 3.6-.5 5.4-2.5 6-6.5Z" fill="#F4C96F"/>
+  <circle cx="12" cy="17" r="1.7" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="62" cy="49" r="1.4" fill="#FFFFFF" opacity="0.8"/>
+</svg>

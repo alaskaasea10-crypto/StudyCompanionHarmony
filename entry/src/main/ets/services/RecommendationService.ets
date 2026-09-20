@@ -16,6 +16,7 @@ export interface RecommendationResult {
   taskIndex: number;
   allDone: boolean;
   title: string;
+  subject: string;
   minutes: number;
   reason: string;
   evidence: string[];
@@ -32,6 +33,31 @@ interface ScheduleInsight {
 }
 
 export class RecommendationService {
+  private static nextTaskIndex(tasks: StudyTask[]): number {
+    const feedbackIndex: number = tasks.findIndex((task: StudyTask) =>
+      !task.completed && task.source === 'quiz-feedback');
+    if (feedbackIndex >= 0) {
+      return feedbackIndex;
+    }
+    return tasks.findIndex((task: StudyTask) => !task.completed);
+  }
+
+  private static sourceText(task: StudyTask): string {
+    if (task.source === 'openpangu') {
+      return 'openPangu决策计划';
+    }
+    if (task.source === 'local-fallback') {
+      return '离线决策计划';
+    }
+    if (task.source === 'quiz-feedback') {
+      return '小测反馈触发';
+    }
+    if (task.source === 'manual') {
+      return '用户主动添加';
+    }
+    return '学习画像计划';
+  }
+
   private static timeToMinutes(value: string): number {
     const parts: string[] = value.split(':');
     if (parts.length !== 2) {
@@ -92,12 +118,13 @@ export class RecommendationService {
   }
 
   static recommend(context: RecommendationContext): RecommendationResult {
-    const taskIndex: number = context.tasks.findIndex((task: StudyTask) => !task.completed);
+    const taskIndex: number = RecommendationService.nextTaskIndex(context.tasks);
     if (taskIndex < 0) {
       return {
         taskIndex: 0,
         allDone: true,
         title: '今天的计划已经完成',
+        subject: context.subject,
         minutes: 0,
         reason: '所有行动项均已完成。现在更值得休息，晚些时候再做一次轻复盘。',
         evidence: ['今日任务：全部完成', `考试：${context.subject}还有${context.examDays}天`, `当前状态：${context.energyState}`],
@@ -110,17 +137,21 @@ export class RecommendationService {
     const schedule: ScheduleInsight = RecommendationService.scheduleInsight(context, task.minutes);
     const energyText: string = context.energyState === '有点累' ?
       '当前精力偏低，先完成一个明确的小目标' : `当前状态为“${context.energyState}”，适合继续推进`;
+    const feedbackText: string = task.source === 'quiz-feedback' ?
+      '刚才的小测暴露了这个薄弱点，因此优先安排针对复习；' : '';
     return {
       taskIndex: taskIndex,
       allDone: false,
       title: task.title,
+      subject: task.subject,
       minutes: task.minutes,
-      reason: `${schedule.summary}；距离${context.subject}考试还有${context.examDays}天。${energyText}。`,
+      reason: `${feedbackText}${schedule.summary}；距离${context.subject}考试还有${context.examDays}天。${energyText}。`,
       evidence: [
         `课表：${schedule.summary}`,
         `考试：${context.subject}还有${context.examDays}天`,
         `状态：${context.energyState}`,
-        `画像：${context.goal} · ${context.learningStyle}`
+        `画像：${context.goal} · ${context.learningStyle}`,
+        `来源：${RecommendationService.sourceText(task)}`
       ],
       timelineTime: schedule.timelineTime,
       timelineTitle: schedule.timelineTitle,

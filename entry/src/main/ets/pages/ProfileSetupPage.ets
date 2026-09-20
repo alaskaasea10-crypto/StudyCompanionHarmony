@@ -1,5 +1,12 @@
+import { ScheduleImportCard } from '../components/ScheduleImportCard';
+import { UserAvatar } from '../components/UserAvatar';
+import { StudyPlanet } from '../components/StudyPlanet';
+import { ScheduleItem } from '../models/StudyModels';
+
 @Component
 export struct ProfileSetupPageView {
+  @Prop profileAvatarUri: string = '';
+  @Prop avatarStatus: string = '';
   @Prop profileName: string = '';
   @Prop profileGrade: string = '';
   @Prop profileMajor: string = '';
@@ -11,10 +18,18 @@ export struct ProfileSetupPageView {
   @Prop profileLearningStyle: string = '';
   @Prop profileSupportStyle: string = '';
   @Prop setupScheduleReady: boolean = false;
+  @Prop scheduleImportStatus: string = 'idle';
+  @Prop scheduleImportMessage: string = '';
+  @Prop scheduleImportSource: string = '';
+  @Prop scheduleDraftItems: ScheduleItem[] = [];
   onTextChange: (field: string, value: string) => void = () => {};
   onChoiceChange: (group: string, value: string) => void = () => {};
   onUseDemoSchedule: () => void = () => {};
+  onScanSchedule: () => void = () => {};
+  onImportSchedule: () => void = () => {};
+  onConfirmSchedule: () => void = () => {};
   onSaveProfile: () => void = () => {};
+  onSelectAvatar: () => void = () => {};
 
   private choiceValue(group: string): string {
     if (group === 'grade') {
@@ -65,15 +80,35 @@ export struct ProfileSetupPageView {
   build() {
     Scroll() {
       Column({ space: 18 }) {
-        Column({ space: 7 }) {
-          Text('✦ 第一次见面').width('100%').fontSize(14).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
-          Text('先让学伴认识你').width('100%').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#202235')
-          Text('这些信息只保存在本机，用来生成符合你真实情况的建议。以后可以在“我的”里重新设置。')
-            .width('100%').fontSize(14).fontColor('#777C90').lineHeight(22)
-        }.width('100%').padding({ top: 10, bottom: 4 })
+        Row({ space: 14 }) {
+          StudyPlanet({ stage: 1, planetSize: 58 })
+          Column({ space: 7 }) {
+            Text('第一次见面').width('100%').fontSize(14).fontWeight(FontWeight.Bold).fontColor('#5B5FEF')
+            Text('先让星球认识你').width('100%').fontSize(27).fontWeight(FontWeight.Bold).fontColor('#202235')
+            Text('这些信息只保存在本机，用来生成符合你真实情况的建议。')
+              .width('100%').fontSize(13).fontColor('#777C90').lineHeight(20)
+          }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+        }.width('100%').padding({ top: 10, bottom: 4 }).alignItems(VerticalAlign.Center)
 
         Column({ space: 14 }) {
-          this.SetupSection('1', '基本信息', '称呼、年级与专业')
+          this.SetupSection('1', '基本信息', '头像、称呼、年级与专业')
+          Row({ space: 15 }) {
+            UserAvatar({
+              avatarUri: this.profileAvatarUri,
+              profileName: this.profileName,
+              avatarSize: 72
+            })
+            Column({ space: 7 }) {
+              Button(this.profileAvatarUri.length > 0 ? '更换头像' : '从图库选择头像')
+                .height(38).fontSize(13).fontColor('#5B5FEF')
+                .backgroundColor('#F0EFFF').borderRadius(13)
+                .onClick(() => {
+                  this.onSelectAvatar();
+                })
+              Text(this.avatarStatus).fontSize(11).fontColor('#9397A9')
+            }
+            .layoutWeight(1).alignItems(HorizontalAlign.Start)
+          }.width('100%')
           TextInput({ placeholder: '希望学伴怎么称呼你', text: this.profileName })
             .width('100%').height(48).backgroundColor('#F6F7FB').borderRadius(14)
             .onChange((value: string) => {
@@ -95,21 +130,28 @@ export struct ProfileSetupPageView {
 
         Column({ space: 14 }) {
           this.SetupSection('2', '导入课表', '让 Agent 找到真正可用的学习时间')
-          Row() {
-            Column({ space: 4 }) {
-              Text(this.setupScheduleReady ? '演示课表已就绪' : '暂未导入课表')
-                .width('100%').fontSize(15).fontWeight(FontWeight.Bold)
-              Text(this.setupScheduleReady ? '周一至周五课程已加入时间感知' : '现在可先使用演示课表，之后再接入 OCR')
-                .width('100%').fontSize(12).fontColor('#9397A9')
-            }.layoutWeight(1)
-            Button(this.setupScheduleReady ? '已导入' : '使用演示课表')
-              .height(38).fontSize(12)
-              .fontColor(this.setupScheduleReady ? '#218764' : Color.White)
-              .backgroundColor(this.setupScheduleReady ? '#E5F7F0' : '#5B5FEF')
-              .onClick(() => {
-                this.onUseDemoSchedule();
-              })
-          }.width('100%').padding(14).backgroundColor('#F6F7FB').borderRadius(16)
+          ScheduleImportCard({
+            setupScheduleReady: this.setupScheduleReady,
+            importStatus: this.scheduleImportStatus,
+            importMessage: this.scheduleImportMessage,
+            importSource: this.scheduleImportSource,
+            draftItems: this.scheduleDraftItems,
+            onScanDocument: () => {
+              this.onScanSchedule();
+            },
+            onSelectImage: () => {
+              this.onImportSchedule();
+            },
+            onConfirm: () => {
+              this.onConfirmSchedule();
+            },
+            onRetry: () => {
+              this.onImportSchedule();
+            },
+            onUseDemo: () => {
+              this.onUseDemoSchedule();
+            }
+          })
         }
         .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
 
