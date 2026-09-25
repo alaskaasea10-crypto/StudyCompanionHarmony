@@ -10,9 +10,9 @@
 
 ## 2. Agent 与课表后端
 
-本地后端配置文件为 `backend/.env`，它不会进入 Git 或团队压缩包。复制 `backend/.env.example` 后，成员自行填写可使用的盘古 API Key。
+比赛版本默认通过 HTTPS 访问 `https://api.badminton2026.site`。队友运行 App 时不需要启动创建者 Mac 上的 `backend/app.py`，也不需要修改局域网 IP。学习状态仍保存在 App 本地；云端只处理本次客户端提交的可信上下文，失败时本地调度仍可继续给出当前行动。
 
-只想先看界面和离线功能，可以不启动后端；要测试小星球的盘古回复或课表识别，朋友需在自己电脑的 `backend` 目录运行 `python3 app.py`，再访问 `http://127.0.0.1:8000/health` 检查。模拟器访问电脑后端用 `10.0.2.2:8000`；真机需与电脑处于同一 Wi-Fi，并把 `entry/src/main/ets/services/BackendConfig.ets` 中的 `LAN_BACKEND_ORIGIN` 改成朋友电脑的局域网 IP。代码包里当前的局域网 IP 是创建者电脑的，朋友不能直接沿用。
+`backend/.env` 只用于可选的本地后端开发，不会进入 Git 或团队压缩包。确需调试本地后端时，复制 `backend/.env.example`，由成员在自己的电脑上填写可使用的盘古 API Key，并由开发者明确清空云端 Backend Origin 后再使用 `127.0.0.1:8000` / `10.0.2.2:8000`。不要把本地地址或密钥作为生产默认配置提交。
 
 主要接口：
 
@@ -22,7 +22,7 @@
 - `POST /api/schedule/parse`：解析端侧 OCR 文字与坐标；
 - `POST /api/schedule/ocr`：仅用于 macOS 本地模拟器的 Vision 备用识别。
 
-FunctionGraph 部署说明见 `backend/functiongraph/README.md`。云端 API Key 只能放在 FunctionGraph 环境变量中，不能写入 ArkTS、提交记录或群聊。
+FunctionGraph 目录是可选部署适配，不是当前腾讯云生产链路。云端 API Key 只能保存在服务器环境变量中，不能写入 ArkTS、提交记录或群聊。
 
 ## 3. 小艺意图配置
 

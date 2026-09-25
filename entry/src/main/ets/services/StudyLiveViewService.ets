@@ -1,5 +1,6 @@
 import { common, Want, WantAgent, wantAgent } from '@kit.AbilityKit';
 import { liveViewManager } from '@kit.LiveViewKit';
+import { formatSubjectName } from '../utils/SubjectDisplayName';
 
 const BUNDLE_NAME: string = 'com.dongxitonghang.studycompanion';
 const FOCUS_LIVE_VIEW_ID: number = 23001;
@@ -34,7 +35,7 @@ export class StudyLiveViewService {
 
   private static async build(subject: string, remainingSeconds: number, paused: boolean,
     sequence: number): Promise<liveViewManager.LiveView> {
-    const safeSubject: string = subject.trim().length > 0 ? subject.trim() : '学习任务';
+    const safeSubject: string = subject.trim().length > 0 ? formatSubjectName(subject) : '学习任务';
     const timeMs: number = Math.max(0, remainingSeconds) * 1000;
     return {
       id: FOCUS_LIVE_VIEW_ID,

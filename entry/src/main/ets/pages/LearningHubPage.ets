@@ -2,29 +2,36 @@ import { VideoCatalog } from '../services/VideoCatalog';
 import { VideoModule } from '../models/VideoModels';
 import { StudyPlanet } from '../components/StudyPlanet';
 import { ScheduleImportCard } from '../components/ScheduleImportCard';
-import { ScheduleItem } from '../models/StudyModels';
-import { AgentDecisionEvidence, AgentDecisionReason, AgentDecisionResult } from '../services/AgentDecisionService';
+import { AcademicGoal, ScheduleItem } from '../models/StudyModels';
+import { AgentDailyPlanItem, AgentDecisionEvidence, AgentDecisionReason, AgentDecisionResult } from '../services/AgentDecisionService';
+import { formatSubjectName } from '../utils/SubjectDisplayName';
+import { LearningResourcePicker } from '../components/LearningResourcePicker';
 
 @Component
 export struct LearningHubPageView {
+  @State resourcePickerOpen: boolean = false;
   @Prop decision: AgentDecisionResult = {
     recommendedAction: { stage: 'plan', headline: '等待学习安排', actionTitle: '先安排', reason: '',
       completionStandard: '', nextStep: '', subject: '', minutes: 0, taskIndex: -1, topicId: '' },
-    reasonChain: [], priority: '待安排', confidenceLevel: '依据有限', evidence: [],
+    dailyPlan: [], reasonChain: [], priority: '待安排', confidenceLevel: '依据有限', evidence: [],
     status: { pendingTaskCount: 0, recentTrend: '暂无相关记录' }
   };
   @Prop now: number = Date.now();
+  @Prop todayTimeText: string = '0分钟';
+  @Prop completedCount: number = 0;
   @Prop setupScheduleReady: boolean = false;
   @Prop scheduleItems: ScheduleItem[] = [];
   @Prop scheduleImportStatus: string = 'idle';
   @Prop scheduleImportMessage: string = '';
   @Prop scheduleImportSource: string = '';
   @Prop scheduleDraftItems: ScheduleItem[] = [];
+  @Prop academicGoals: AcademicGoal[] = [];
   onPrimaryAction: () => void = () => {};
   onOpenSchedule: () => void = () => {};
   onScanSchedule: () => void = () => {};
   onImportSchedule: () => void = () => {};
   onConfirmSchedule: () => void = () => {};
+  onScheduleDraftItemsChange: (items: ScheduleItem[]) => void = () => {};
   @Prop planetStage: number = 1;
   onOpen: (destination: number) => void = () => {};
 
@@ -50,7 +57,7 @@ export struct LearningHubPageView {
   private evidenceValue(label: string): string {
     const item: AgentDecisionEvidence | undefined = this.decision.evidence.find(
       (evidence: AgentDecisionEvidence) => evidence.label === label);
-    return item === undefined ? '' : item.value;
+    return item === undefined ? '' : formatSubjectName(item.value);
   }
 
   private taskFactor(): string {
@@ -68,6 +75,41 @@ export struct LearningHubPageView {
     return '先安排';
   }
 
+  private upcomingPlan(): AgentDailyPlanItem[] {
+    const currentKey: string = this.decision.recommendedAction.key ?? '';
+    return this.decision.dailyPlan.filter((item: AgentDailyPlanItem) =>
+      `task:${item.taskId}` !== currentKey);
+  }
+
+  private currentResourceTask(): AgentDailyPlanItem | undefined {
+    const first: AgentDailyPlanItem | undefined = this.decision.dailyPlan[0];
+    const currentKey: string = this.decision.recommendedAction.key ?? '';
+    if (first === undefined || currentKey !== `task:${first.taskId}`) { return undefined; }
+    return first;
+  }
+
+  private needsMoreGoals(): boolean {
+    const stage: string = this.decision.recommendedAction.stage;
+    return this.decision.status.pendingTaskCount <= 1 && this.upcomingPlan().length === 0 &&
+      (stage === 'execute' || stage === 'plan');
+  }
+
+  private visibleGoals(): AcademicGoal[] {
+    return this.academicGoals.filter((goal: AcademicGoal) => !goal.completed).slice(0, 3);
+  }
+
+  private goalDate(deadline: string): string {
+    const parts: string[] = deadline.split('-');
+    if (parts.length === 3) {
+      const month: number = Number(parts[1]);
+      const day: number = Number(parts[2]);
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        return `${month}月${day}日`;
+      }
+    }
+    return deadline.trim().length > 0 ? deadline : '日期待补充';
+  }
+
   @Builder
   FactorRow(title: string, value: string, source: string) {
     Column({ space: 4 }) {
@@ -76,17 +118,17 @@ export struct LearningHubPageView {
         Blank()
         Text(source).fontSize(10).fontColor('#9397A9')
       }.width('100%')
-      Text(value).fontSize(13).lineHeight(19).fontColor('#353A52').width('100%')
+      Text(formatSubjectName(value)).fontSize(13).lineHeight(19).fontColor('#353A52').width('100%')
     }.width('100%').padding(12).backgroundColor('#F5F4FC').borderRadius(13)
   }
 
   @Builder
   DecisionStep(reason: AgentDecisionReason, index: number) {
     Column({ space: 7 }) {
-      Text(`依据 ${index + 1}`).fontSize(11).fontWeight(FontWeight.Bold).fontColor('#6A64C9').width('100%')
-      Text(`数据因素  ·  ${reason.data}`).fontSize(12).lineHeight(18).fontColor('#5D637A').width('100%')
-      Text(`判断  ·  ${reason.judgment}`).fontSize(12).lineHeight(18).fontColor('#5D637A').width('100%')
-      Text(`推荐  ·  ${reason.recommendation}`).fontSize(12).lineHeight(18)
+      Text(`小提醒 ${index + 1}`).fontSize(11).fontWeight(FontWeight.Bold).fontColor('#6A64C9').width('100%')
+      Text(`🌱 我发现  ·  ${formatSubjectName(reason.data)}`).fontSize(12).lineHeight(18).fontColor('#5D637A').width('100%')
+      Text(`💭 我想到  ·  ${formatSubjectName(reason.judgment)}`).fontSize(12).lineHeight(18).fontColor('#5D637A').width('100%')
+      Text(`✨ 我建议  ·  ${formatSubjectName(reason.recommendation)}`).fontSize(12).lineHeight(18)
         .fontWeight(FontWeight.Medium).fontColor('#514BB0').width('100%')
     }.width('100%').padding(12).backgroundColor('#F7F6FC').borderRadius(13)
   }
@@ -96,7 +138,7 @@ export struct LearningHubPageView {
     Row({ space: 12 }) {
       Text(item.startTime).fontSize(13).fontWeight(FontWeight.Bold).fontColor('#5B56BF').width(48)
       Column({ space: 2 }) {
-        Text(item.course).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#30344B').width('100%')
+        Text(formatSubjectName(item.course)).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#30344B').width('100%')
         if (item.location.trim().length > 0) {
           Text(item.location).fontSize(11).fontColor('#858BA1').width('100%')
         }
@@ -106,59 +148,157 @@ export struct LearningHubPageView {
   }
 
   build() {
+    Stack({ alignContent: Alignment.Center }) {
     Scroll() {
       Column({ space: 18 }) {
         Row() {
           Column({ space: 3 }) {
-            Text('AI学习空间').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#292D43')
-            Text('看清原因，再完成眼前这一项').fontSize(12).fontColor('#8A8FA2')
+            Text('星球学习空间').fontSize(28).fontWeight(FontWeight.Bold).fontColor('#292D43')
+            Text('先做好眼前这一项，再慢慢往前走').fontSize(12).fontColor('#8A8FA2')
           }.layoutWeight(1).alignItems(HorizontalAlign.Start)
           StudyPlanet({ stage: this.planetStage, planetSize: 46 })
         }.width('100%').alignItems(VerticalAlign.Center)
 
         Column({ space: 13 }) {
-          Text('✦  当前AI推荐行动').fontSize(13).fontWeight(FontWeight.Medium)
+          Text('✦  现在先做').fontSize(13).fontWeight(FontWeight.Medium)
             .fontColor('#DFD8FF').width('100%')
           Text(this.decision.recommendedAction.headline.length > 0 ?
-            this.decision.recommendedAction.headline : '暂无可执行任务')
+            formatSubjectName(this.decision.recommendedAction.headline) : '暂无可执行任务')
             .fontSize(23).fontWeight(FontWeight.Bold).fontColor(Color.White).width('100%')
             .maxLines(3).textOverflow({ overflow: TextOverflow.Ellipsis })
           if (this.decision.recommendedAction.subject.length > 0 || this.decision.recommendedAction.minutes > 0) {
-            Text(`${this.decision.recommendedAction.subject}${this.decision.recommendedAction.minutes > 0 ?
+            Text(`${formatSubjectName(this.decision.recommendedAction.subject)}${this.decision.recommendedAction.minutes > 0 ?
               ` · 约${this.decision.recommendedAction.minutes}分钟` : ''}`)
               .fontSize(12).fontColor('#E0DAFF').width('100%')
           }
-          Text(this.decision.reasonChain.length > 0 ? this.decision.reasonChain[0].judgment : '依据有限，暂无相关记录')
-            .fontSize(13).lineHeight(20).fontColor('#F4F0FF').width('100%')
           Button(this.primaryActionLabel()).width('100%').height(48).fontSize(15)
             .fontWeight(FontWeight.Bold).fontColor('#443B78').backgroundColor(Color.White).borderRadius(15)
             .onClick(() => { this.onPrimaryAction(); })
+          if (this.currentResourceTask() !== undefined) {
+            Row({ space: 7 }) {
+              Text('✨').fontSize(14)
+              Text('小星球帮我找资料').fontSize(13).fontWeight(FontWeight.Medium).fontColor('#F2EEFF')
+              Text('›').fontSize(18).fontColor('#D8D0FF')
+            }.width('100%').height(44).justifyContent(FlexAlign.Center)
+              .backgroundColor('#554A8A').borderRadius(14)
+              .border({ width: 1, color: '#7569AA' })
+              .onClick(() => { this.resourcePickerOpen = true; })
+          }
         }.width('100%').padding(20).backgroundColor('#443B78').borderRadius(24)
 
+        if (this.decision.dailyPlan.length > 0) {
+          Column({ space: 13 }) {
+            Text('今天的学习节奏').fontSize(18).fontWeight(FontWeight.Bold)
+              .fontColor('#292D43').width('100%')
+            if (this.decision.reasonChain.length > 0) {
+              Column({ space: 4 }) {
+                Text('小星球发现').fontSize(12).fontWeight(FontWeight.Bold)
+                  .fontColor('#5D55BE').width('100%')
+                Text(formatSubjectName(`${this.decision.reasonChain[0].data}；${this.decision.reasonChain[0].judgment}`))
+                  .fontSize(12).lineHeight(18).fontColor('#656B80').width('100%')
+              }.width('100%').padding(12).alignItems(HorizontalAlign.Start)
+                .backgroundColor('#F7F6FC').borderRadius(13)
+            }
+            Row({ space: 12 }) {
+              Text('现在').fontSize(11).fontWeight(FontWeight.Bold).fontColor('#5D55BE')
+                .padding({ left: 9, right: 9, top: 6, bottom: 6 })
+                .backgroundColor('#EEECFA').borderRadius(9)
+              Column({ space: 3 }) {
+                Text(formatSubjectName(this.decision.recommendedAction.headline)).fontSize(14).fontWeight(FontWeight.Bold)
+                  .fontColor('#30344B').width('100%')
+                Text('需要先推进眼前这一项').fontSize(11).fontColor('#7772B8').width('100%')
+                if (this.decision.recommendedAction.subject.length > 0 &&
+                  this.decision.recommendedAction.minutes > 0) {
+                  Text(`${formatSubjectName(this.decision.recommendedAction.subject)} · 约${this.decision.recommendedAction.minutes}分钟`)
+                    .fontSize(11).fontColor('#858BA1').width('100%')
+                }
+              }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+            }.width('100%').alignItems(VerticalAlign.Top)
+            ForEach(this.upcomingPlan(), (item: AgentDailyPlanItem, index: number) => {
+              Row({ space: 12 }) {
+                Text(index === 0 ? '之后' : '稍后').fontSize(11).fontWeight(FontWeight.Medium)
+                  .fontColor('#7973B9').width(48)
+                Column({ space: 3 }) {
+                  Text(formatSubjectName(item.title)).fontSize(13).fontWeight(FontWeight.Medium)
+                    .fontColor('#41465D').width('100%')
+                  Text(`${formatSubjectName(item.subject)} · 约${item.suggestedMinutes}分钟`)
+                    .fontSize(11).fontColor('#858BA1').width('100%')
+                  Text(index === 0 ? '可以继续完成' :
+                    item.suggestedMinutes <= 20 ? '可以留给碎片时间' : '留给后面的时间')
+                    .fontSize(11).fontColor('#7772B8').width('100%')
+                }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+              }.width('100%').alignItems(VerticalAlign.Top)
+            }, (item: AgentDailyPlanItem) => item.taskId)
+            Text(this.upcomingPlan().length > 0 ?
+              '这些是今天的建议次序，完成眼前这一项后再看下一步。' :
+              '还没有确认更多可安排时间，先专注眼前这一项。')
+              .fontSize(11).lineHeight(17).fontColor('#858BA1').width('100%')
+          }.width('100%').padding(18).alignItems(HorizontalAlign.Start)
+            .backgroundColor(Color.White).borderRadius(22)
+        } else if (this.needsMoreGoals()) {
+          Text('小星球还不了解你的全部安排，可以先告诉我更多学习目标。')
+            .fontSize(12).lineHeight(19).fontColor('#777D94').width('100%')
+            .padding(16).backgroundColor(Color.White).borderRadius(16)
+        }
+
         Column({ space: 12 }) {
-          Text('为什么现在学习？').fontSize(18).fontWeight(FontWeight.Bold)
+          Text('小星球想到这些').fontSize(18).fontWeight(FontWeight.Bold)
             .fontColor('#292D43').width('100%')
-          this.FactorRow('时间因素', `现在 ${this.beijingClock()} · ${this.evidenceValue('今日目标剩余').length > 0 ?
-            `今日目标剩余 ${this.evidenceValue('今日目标剩余')}` : '暂无今日目标记录'}`,
-            this.evidenceValue('今日目标剩余').length > 0 ? '当前时间 / 目标与专注记录' : '当前时间')
-          this.FactorRow('任务因素', this.taskFactor(), '已保存任务')
+          this.FactorRow('当前目标', this.evidenceValue('当前任务').length > 0 ?
+            this.evidenceValue('当前任务') : '暂无当前任务记录', '已保存任务')
+          this.FactorRow('时间安排', this.evidenceValue('今日目标剩余').length > 0 ?
+            `现在 ${this.beijingClock()} · ${this.evidenceValue('今日目标剩余')}` :
+            this.decision.recommendedAction.minutes > 0 ?
+              `现在 ${this.beijingClock()} · 本轮约${this.decision.recommendedAction.minutes}分钟` :
+              `现在 ${this.beijingClock()} · 暂无可安排时长记录`, '当前时间与学习记录')
+          this.FactorRow('已完成情况', `已完成${this.completedCount}项任务 · 今日已投入${this.todayTimeText}`,
+            '已保存任务与本机专注记录')
           if (this.evidenceValue('已确认考试日期').length > 0) {
-            this.FactorRow('截止因素', this.evidenceValue('已确认考试日期'), '你确认的个人目标')
+            this.FactorRow('目标日期', this.evidenceValue('已确认考试日期'), '你确认的个人目标')
           }
-          this.FactorRow('学习状态因素', this.decision.status.recentTrend, '本机专注记录')
+          this.FactorRow('最近的学习', this.decision.status.recentTrend, '本机专注记录')
           if (this.evidenceValue('课表空档').length > 0) {
-            this.FactorRow('课表因素', this.evidenceValue('课表空档'), '已确认课表')
+            this.FactorRow('今天的课程', this.evidenceValue('课表空档'), '已确认课表')
           } else if (!this.hasRealSchedule()) {
-            this.FactorRow('课表因素', '暂无真实课表依据', '未参与本次决策')
+            this.FactorRow('今天的课程', '还没有导入真实课表', '导入后我就能参考')
           }
-          Text('数据因素  →  判断  →  推荐').fontSize(12).fontWeight(FontWeight.Bold)
-            .fontColor('#625DC0').width('100%').margin({ top: 3 })
-          ForEach(this.decision.reasonChain, (reason: AgentDecisionReason, index: number) => {
-            this.DecisionStep(reason, index)
-          }, (reason: AgentDecisionReason, index: number) => `${index}-${reason.data}`)
-          Text(`因此推荐：${this.decision.recommendedAction.headline}`)
-            .fontSize(13).fontWeight(FontWeight.Bold).fontColor('#514BB0').width('100%')
+          if (this.decision.reasonChain.length > 0) {
+            Text('小星球想到').fontSize(12).fontWeight(FontWeight.Bold)
+              .fontColor('#625DC0').width('100%').margin({ top: 3 })
+            ForEach(this.decision.reasonChain, (reason: AgentDecisionReason, index: number) => {
+              this.DecisionStep(reason, index)
+            }, (reason: AgentDecisionReason, index: number) => `${index}-${reason.data}`)
+            Text(`✨ 小星球提醒 · ${formatSubjectName(this.decision.recommendedAction.headline)}`)
+              .fontSize(13).fontWeight(FontWeight.Bold).fontColor('#514BB0').width('100%')
+          }
         }.width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
+
+        Column({ space: 11 }) {
+          Row() {
+            Text('学习目标').fontSize(17).fontWeight(FontWeight.Bold).fontColor('#292D43')
+            Blank()
+            Text('查看全部 ›').fontSize(12).fontWeight(FontWeight.Medium).fontColor('#625DC0')
+          }.width('100%')
+          if (this.visibleGoals().length > 0) {
+            ForEach(this.visibleGoals(), (goal: AcademicGoal) => {
+              Row({ space: 10 }) {
+                Column({ space: 3 }) {
+                  Text(`${formatSubjectName(goal.subject)} · ${this.goalDate(goal.deadline)}`)
+                    .fontSize(13).fontWeight(FontWeight.Bold).fontColor('#3D4259').width('100%')
+                  Text(goal.title).fontSize(11).fontColor('#898EA1').width('100%')
+                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+                Text('›').fontSize(18).fontColor('#A5A1C8')
+              }.width('100%')
+            }, (goal: AcademicGoal) => goal.id)
+          } else {
+            Text('还没有进行中的长期学习目标，添加后小星球会参考它安排每天的节奏。')
+              .fontSize(12).lineHeight(18).fontColor('#858BA1').width('100%')
+          }
+        }.width('100%').padding(16).alignItems(HorizontalAlign.Start)
+          .backgroundColor('#F7F6FC').borderRadius(18)
+          .border({ width: 1, color: '#E7E4F5' })
+          .onClick(() => { this.onOpen(1); })
 
         Column({ space: 12 }) {
           Row() {
@@ -185,7 +325,7 @@ export struct LearningHubPageView {
           } else {
             Text('暂未导入课表').fontSize(14).fontWeight(FontWeight.Medium).fontColor('#353A52').width('100%')
             if (this.setupScheduleReady) {
-              Text('演示课表不会参与AI决策，请导入真实课表。')
+              Text('演示课表不能作为今天安排的依据，请导入真实课表。')
                 .fontSize(12).fontColor('#858BA1').width('100%')
             }
             ScheduleImportCard({
@@ -198,19 +338,22 @@ export struct LearningHubPageView {
               onScanDocument: () => { this.onScanSchedule(); },
               onSelectImage: () => { this.onImportSchedule(); },
               onConfirm: () => { this.onConfirmSchedule(); },
-              onRetry: () => { this.onImportSchedule(); }
+              onRetry: () => { this.onImportSchedule(); },
+              onDraftItemsChange: (items: ScheduleItem[]) => { this.onScheduleDraftItemsChange(items); }
             })
           }
         }.width('100%').padding(18).backgroundColor('#EEEDFA').borderRadius(22)
 
-        Row({ space: 18 }) {
-          Text('目标与计划 ›').fontSize(12).fontColor('#858BA1').height(44)
-            .onClick(() => { this.onOpen(1); })
-          Text('学习资料 ›').fontSize(12).fontColor('#858BA1').height(44)
-            .onClick(() => { this.onOpen(9); })
-        }.width('100%').justifyContent(FlexAlign.Center)
       }.padding({ left: 20, right: 20, top: 22, bottom: 28 })
         .width('100%').alignItems(HorizontalAlign.Start)
+    }.width('100%').height('100%')
+    if (this.resourcePickerOpen && this.currentResourceTask() !== undefined) {
+      LearningResourcePicker({
+        subject: this.currentResourceTask()?.subject ?? '',
+        taskTitle: this.currentResourceTask()?.title ?? '',
+        onClose: () => { this.resourcePickerOpen = false; }
+      })
+    }
     }.layoutWeight(1)
   }
 }

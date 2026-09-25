@@ -1,6 +1,8 @@
 # 学伴 Agent 服务
 
-这个服务承担三项工作：调用华为云 openPangu 生成今日任务、提供学习情绪陪伴，以及把课表 OCR 结果解析成统一课程数据。开发时API Key只保存在本机 `backend/.env`；云端部署时只保存在FunctionGraph环境变量，始终不会进入ArkTS源码。
+这个服务承担三项工作：通过 openPangu Native Function Calling 为真实任务生成今日安排、提供学习情绪陪伴，以及把课表 OCR 结果解析成统一课程数据。生产 App 默认访问 `https://api.badminton2026.site`；开发时 API Key 只保存在本机 `backend/.env`，云端部署时只保存在服务器环境变量，始终不会进入 ArkTS 源码。
+
+今日计划链路为：客户端提交最小请求 → openPangu 按需调用四个只读 Tool → Tool Registry 从本次客户端可信上下文返回结果 → openPangu 规划 → 服务端 `validate_plan` → 客户端 `PlanValidator`。云端不是用户任务数据库；客户端本地仍是学习状态的主要来源，云端失败时 App 会回退到本地调度。
 
 课表识别没有使用小艺：
 
@@ -23,16 +25,16 @@ OPENPANGU_API_KEY=你的API Key
 
 若华为云控制台显示的接口地址或模型名不同，同时修改 `.env` 中对应配置。
 
-## 启动
+## 可选的本地开发启动
 
 ```bash
 cd StudyCompanionHarmony/backend
 python3 app.py
 ```
 
-识别课表或生成 Agent 计划期间不要关闭这个终端。浏览器访问 `http://127.0.0.1:8000/health`，看到 `"ok": true` 且 `"configured": true` 即配置成功。
+本地开发期间不要关闭这个终端。浏览器访问 `http://127.0.0.1:8000/health`，看到 `"ok": true` 且 `"configured": true` 即配置成功。
 
-DevEco 模拟器会通过 `10.0.2.2:8000` 访问宿主 Mac，因此服务默认监听 `0.0.0.0`，不需要额外做 `hdc rport` 端口映射。若手动把 `AGENT_BACKEND_HOST` 改回 `127.0.0.1`，模拟器将无法连接并会退回本地方案。
+只有开发者主动清空 App 的云端 Backend Origin 时，DevEco 模拟器才会通过 `10.0.2.2:8000` 访问宿主 Mac。正式版本不依赖该地址，也不要求 Mac 运行 `backend/app.py`。
 
 ## 课表导入
 
@@ -44,7 +46,7 @@ DevEco 模拟器会通过 `10.0.2.2:8000` 访问宿主 Mac，因此服务默认�
 - `POST /api/schedule/ocr`：模拟器把图片发到本机 macOS Vision 识别并解析。
 - `POST /api/agent/emotional-support`：生成克制、可执行的学习情绪陪伴回复。
 
-## FunctionGraph部署准备
+## 可选的 FunctionGraph 部署准备
 
 当前项目已经提供FunctionGraph事件函数入口。先生成不含密钥的部署包：
 
@@ -57,14 +59,13 @@ unzip -l backend/dist/functiongraph-agent.zip
 部署包入口为 `index.handler`，支持健康检查、openPangu今日计划、情绪陪伴和端侧OCR文字解析。
 详细控制台参数见 `backend/functiongraph/README.md`。
 
-FunctionGraph获得HTTPS调用地址后，只需修改：
+如另行使用 FunctionGraph 获得 HTTPS 调用地址，只需修改：
 
 ```text
 entry/src/main/ets/services/BackendConfig.ets
 ```
 
-将 `CLOUD_BACKEND_ORIGIN` 填为不带末尾斜杠的HTTPS根地址。留空时App继续使用
-`http://127.0.0.1:8000`，所以本地开发方式不会被破坏。不要把API Key放进应用。
+将 `CLOUD_BACKEND_ORIGIN` 填为不带末尾斜杠的 HTTPS 根地址。当前比赛生产地址已经配置；不要把 API Key 放进应用。
 
 ## 测试
 

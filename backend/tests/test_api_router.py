@@ -10,6 +10,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from api_router import handle_api  # noqa: E402
+from agent_service import AgentServiceError  # noqa: E402
 from functiongraph.index import handler  # noqa: E402
 
 
@@ -56,6 +57,17 @@ class ApiRouterTests(unittest.TestCase):
         self.assertEqual(200, result.status)
         self.assertTrue(result.payload["ok"])
         mocked_call.assert_called_once()
+
+    @patch("api_router.call_openpangu")
+    def test_agent_route_returns_safe_service_error(self, mocked_call) -> None:
+        mocked_call.side_effect = AgentServiceError("暂时无法连接 openPangu 服务")
+        result = handle_api("POST", "/api/agent/today-plan", json.dumps({
+            "requestText": "安排今天学习",
+            "profile": {"dailyMinutes": 30},
+            "context": {"availableMinutesToday": 30},
+        }))
+        self.assertEqual(503, result.status)
+        self.assertEqual({"ok": False, "error": "暂时无法连接 openPangu 服务"}, result.payload)
 
     @patch("api_router.call_emotional_support")
     def test_emotional_support_has_separate_route(self, mocked_call) -> None:

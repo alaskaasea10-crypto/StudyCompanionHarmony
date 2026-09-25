@@ -49,6 +49,14 @@ export class GoalPlanningService {
         GoalPlanningService.decompose(goal) };
   }
 
+  // 编辑长期目标时保留 goalId、创建时间、完成状态与已有阶段身份。
+  static update(goal: AcademicGoal, title: string, subject: string, deadline: string,
+    estimatedMinutes: number): AcademicGoal {
+    return { id: goal.id, title: title.trim(), type: goal.type, subject: subject.trim(),
+      deadline: deadline.trim(), estimatedMinutes: Math.min(6000, Math.max(60, estimatedMinutes)),
+      completed: goal.completed, createdAt: goal.createdAt, milestones: goal.milestones };
+  }
+
   static nextMilestone(goal: AcademicGoal): GoalMilestone | undefined {
     return (goal.milestones ?? []).find((item: GoalMilestone) => !item.completed);
   }
@@ -60,8 +68,10 @@ export class GoalPlanningService {
   }
 
   static daysUntil(deadline: string, now: number = Date.now()): number {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline)) { return 999; }
     const target: number = new Date(`${deadline}T00:00:00+08:00`).getTime();
     if (!Number.isFinite(target)) { return 999; }
+    if (GoalPlanningService.dateKey(target) !== deadline) { return 999; }
     const clock: Date = new Date(now + 8 * 60 * 60 * 1000);
     const today: number = new Date(`${clock.getUTCFullYear()}-${(clock.getUTCMonth() + 1).toString().padStart(2, '0')}-${clock.getUTCDate().toString().padStart(2, '0')}T00:00:00+08:00`).getTime();
     return Math.ceil((target - today) / 86400000);

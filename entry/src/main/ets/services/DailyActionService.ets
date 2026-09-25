@@ -6,6 +6,7 @@ export type DailyActionStage = 'plan' | 'diagnose' | 'remediate' | 'retest' | 'e
 
 export interface DailyAction {
   key?: string;
+  taskId?: string;
   stage: DailyActionStage;
   headline: string;
   actionTitle: string;

@@ -6,6 +6,7 @@ import { StudyDataCenter } from './StudyDataCenter';
 import { DailyActionService } from './DailyActionService';
 import { AgentDecisionService } from './AgentDecisionService';
 import { GoalPlanningService } from './GoalPlanningService';
+import { formatSubjectName } from '../utils/SubjectDisplayName';
 
 const STUDY_STORE_NAME: string = 'learner_profile';
 const STUDY_STATE_KEY: string = 'study_state_v1';
@@ -44,8 +45,8 @@ export class StudyWidgetService {
     if (!snapshot.profileCompleted) { return data; }
     const tasks: StudyTask[] = Array.isArray(snapshot.tasks) ? snapshot.tasks : [];
     const action = AgentDecisionService.decide(snapshot).recommendedAction;
-    data.subject = action.subject;
-    data.taskTitle = action.headline;
+    data.subject = formatSubjectName(action.subject);
+    data.taskTitle = formatSubjectName(action.headline);
     data.minutesText = action.minutes > 0 ? '约 ' + action.minutes + ' 分钟' : '休息一下';
     data.actionText = action.actionTitle;
     // 点击时用最新档案重新判断，避免旧卡片重开已完成任务。

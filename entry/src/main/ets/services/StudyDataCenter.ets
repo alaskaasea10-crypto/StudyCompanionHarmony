@@ -43,7 +43,8 @@ export class StudyDataCenter {
         focusedAt: task.focusedAt,
         submittedAt: task.submittedAt,
         verifiedAt: task.verifiedAt,
-        resultNote: task.resultNote
+        resultNote: task.resultNote,
+        studyExperience: task.studyExperience
       };
       return normalizedTask;
     });

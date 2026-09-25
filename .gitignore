@@ -18,3 +18,30 @@ backend/__pycache__/
 backend/tests/__pycache__/
 backend/dist/
 /dist/
+
+# Python-generated caches and local test output.
+**/__pycache__/
+*.pyc
+*.pyo
+**/.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local environment files. Keep shareable templates tracked.
+.env.*
+!.env.example
+!**/.env.example
+
+# Editor, backup and transient deployment files.
+*.bak-*
+*.swp
+*.swo
+*~
+
+# Local HarmonyOS signing configuration and private signing containers.
+/.signing/
+*.p12
+*.p7b
+*.jks
+*.keystore

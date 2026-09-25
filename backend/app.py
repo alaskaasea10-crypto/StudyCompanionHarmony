@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import os
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 from agent_service import load_config
 from api_router import ApiResult, handle_api, request_limit
+
+
+def runtime_name() -> str:
+    """Return an overridable label while keeping Mac development unchanged."""
+    default_name = "cloud-server" if sys.platform.startswith("linux") else "local-macos"
+    return os.getenv("AGENT_RUNTIME_NAME", default_name)
 
 
 class AgentRequestHandler(BaseHTTPRequestHandler):
@@ -19,7 +26,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             "GET",
             self.path,
             enable_image_ocr=True,
-            runtime_name="local-macos",
+            runtime_name=runtime_name(),
         ))
 
     def do_POST(self) -> None:  # noqa: N802
@@ -36,7 +43,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             self.path,
             raw,
             enable_image_ocr=True,
-            runtime_name="local-macos",
+            runtime_name=runtime_name(),
         ))
 
     def log_message(self, format_string: str, *args: Any) -> None:

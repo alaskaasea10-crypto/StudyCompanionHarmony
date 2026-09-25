@@ -1,5 +1,6 @@
 import { AgentConversationMessage, AgentGeneratedTask } from '../models/AgentModels';
 import { StudyPlanet } from './StudyPlanet';
+import { formatSubjectName } from '../utils/SubjectDisplayName';
 
 @Component
 export struct FloatingAgent {
@@ -16,8 +17,11 @@ export struct FloatingAgent {
   @Prop planSource: string = '';
   @Prop supportSource: string = '';
   @Prop planetStage: number = 1;
+  @Prop showHint: boolean = false;
+  @Prop interactive: boolean = true;
   onToggle: () => void = () => {};
   onClose: () => void = () => {};
+  onHintDismiss: () => void = () => {};
   onModeChange: (mode: string) => void = () => {};
   onInputChange: (value: string) => void = () => {};
   onSend: () => void = () => {};
@@ -43,6 +47,34 @@ export struct FloatingAgent {
     }
     this.planetX = Math.max(8, Math.min(this.areaWidth - 64, this.planetX));
     this.planetY = Math.max(16, Math.min(this.areaHeight - 120, this.planetY));
+  }
+
+  private hintWidth(): number {
+    return Math.min(288, Math.max(210, this.areaWidth - 92));
+  }
+
+  private hintHeight(): number {
+    return this.areaWidth < 350 ? 92 : 84;
+  }
+
+  private hintX(): number {
+    const width: number = this.hintWidth();
+    return Math.max(12, Math.min(this.areaWidth - width - 12, this.planetX - width + 54));
+  }
+
+  private hintY(): number {
+    const height: number = this.hintHeight();
+    const preferred: number = this.planetY > height + 28 ? this.planetY - height - 8 : this.planetY + 70;
+    return Math.max(16, Math.min(this.areaHeight - height - 16, preferred));
+  }
+
+  private openAssistant(): void {
+    this.onHintDismiss();
+    this.onToggle();
+  }
+
+  private hideHint(): void {
+    this.onHintDismiss();
   }
 
   @Builder
@@ -74,13 +106,13 @@ export struct FloatingAgent {
           Text(`${index + 1}`).width(22).height(22).textAlign(TextAlign.Center).fontSize(10)
             .fontColor('#625CC8').backgroundColor('#E9E6FA').borderRadius(11)
           Column({ space: 2 }) {
-            Text(task.title).fontSize(12).fontWeight(FontWeight.Medium).fontColor('#303347').maxLines(2)
-            Text(`${task.subject} · ${task.minutes}分钟`).fontSize(10).fontColor('#85899E')
+            Text(formatSubjectName(task.title)).fontSize(12).fontWeight(FontWeight.Medium).fontColor('#303347').maxLines(2)
+            Text(`${formatSubjectName(task.subject)} · ${task.minutes}分钟`).fontSize(10).fontColor('#85899E')
           }.layoutWeight(1).alignItems(HorizontalAlign.Start)
         }.width('100%')
       }, (task: AgentGeneratedTask, index: number) =>
         `floating-plan-${index}-${task.title}-${task.minutes}`)
-      Button(this.busy ? '正在加入…' : '接受并加入今日待办').width('100%').height(38)
+      Button(this.busy ? '正在保存…' : '把第一项设为今天优先').width('100%').height(38)
         .fontSize(12).backgroundColor('#6661CF').borderRadius(12).enabled(!this.busy)
         .onClick(() => { this.onAcceptPlan(); })
     }.width('100%').padding(12).backgroundColor('#F0EFFA').borderRadius(16)
@@ -88,7 +120,7 @@ export struct FloatingAgent {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      if (this.open) {
+      if (this.interactive && this.open) {
         Column().width('100%').height('100%').backgroundColor('#33090C18')
           .hitTestBehavior(HitTestMode.Block).onClick(() => { this.onClose(); })
         Column({ space: 10 }) {
@@ -168,26 +200,57 @@ export struct FloatingAgent {
           // Default 允许弹窗及其 TextInput 子节点接收触摸；Block 会把子节点一并禁用。
           .hitTestBehavior(HitTestMode.Default)
       }
-      Stack() {
+      if (this.interactive && !this.open && this.showHint) {
+        Stack({ alignContent: Alignment.TopStart }) {
+          Row({ space: 4 }) {
+            Column({ space: 5 }) {
+              Text('学习卡住了，或者心里有点烦？来找我聊聊吧～')
+                .fontSize(12).lineHeight(18).fontWeight(FontWeight.Medium).fontColor('#3D4055').width('100%')
+              if (this.areaWidth >= 350) {
+                Text('我会陪你一起想办法').fontSize(10).fontColor('#7E8296').width('100%')
+              }
+            }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+              .accessibilityText('学习卡住了，或者心里有点烦？来找我聊聊吧。打开小星球对话助手')
+              .onClick(() => { this.openAssistant(); })
+            Text('×').width(32).height(32).textAlign(TextAlign.Center).fontSize(18).fontColor('#85899D')
+              .accessibilityText('关闭小星球提示')
+              .hitTestBehavior(HitTestMode.Block)
+              .onClick(() => { this.hideHint(); })
+          }.width('100%').height(this.hintHeight() - 8)
+            .alignItems(VerticalAlign.Top)
+            .padding({ left: 14, right: 8, top: 10, bottom: 10 })
+            .backgroundColor('#FCFBFF').borderRadius(18)
+            .border({ width: 1, color: '#E1DDF3' })
+            .shadow({ radius: 16, color: '#26252A4A', offsetX: 0, offsetY: 7 })
+          Text('◆').fontSize(16).fontColor('#FCFBFF')
+            .position({ x: this.hintWidth() - 40, y: this.hintHeight() - 20 })
+        }.width(this.hintWidth()).height(this.hintHeight())
+          .position({ x: this.hintX(), y: this.hintY() })
+          .hitTestBehavior(HitTestMode.Default)
+      }
+      if (this.interactive) {
+        Stack() {
         StudyPlanet({ stage: this.planetStage, planetSize: 58, wink: this.open })
         Text('✦').fontSize(13).fontColor('#F3DDAF').position({ x: 40, y: 5 })
-      }.width(62).height(62).position({ x: this.planetX, y: this.planetY })
-        .scale({ x: this.open ? 1.1 : 1, y: this.open ? 1.1 : 1 })
-        .animation({ duration: 220, curve: Curve.EaseOut })
-        .onClick(() => { if (!this.dragged) { this.onToggle(); } })
-        .gesture(PanGesture({ direction: PanDirection.All, distance: 5 })
-          .onActionStart(() => {
-            this.dragStartX = this.planetX; this.dragStartY = this.planetY; this.dragged = false;
-          })
-          .onActionUpdate((event: GestureEvent) => {
-            this.dragged = true;
-            this.planetX = Math.max(8, Math.min(this.areaWidth - 64, this.dragStartX + event.offsetX));
-            this.planetY = Math.max(16, Math.min(this.areaHeight - 120, this.dragStartY + event.offsetY));
-          })
-          .onActionEnd(() => { setTimeout(() => { this.dragged = false; }, 120); }))
-        .hitTestBehavior(HitTestMode.Block)
+        }.width(62).height(62).position({ x: this.planetX, y: this.planetY })
+          .scale({ x: this.open ? 1.1 : 1, y: this.open ? 1.1 : 1 })
+          .animation({ duration: 220, curve: Curve.EaseOut })
+          .accessibilityText('打开小星球对话助手')
+          .onClick(() => { if (!this.dragged) { this.openAssistant(); } })
+          .gesture(PanGesture({ direction: PanDirection.All, distance: 5 })
+            .onActionStart(() => {
+              this.dragStartX = this.planetX; this.dragStartY = this.planetY; this.dragged = false;
+            })
+            .onActionUpdate((event: GestureEvent) => {
+              this.dragged = true;
+              this.planetX = Math.max(8, Math.min(this.areaWidth - 64, this.dragStartX + event.offsetX));
+              this.planetY = Math.max(16, Math.min(this.areaHeight - 120, this.dragStartY + event.offsetY));
+            })
+            .onActionEnd(() => { setTimeout(() => { this.dragged = false; }, 120); }))
+          .hitTestBehavior(HitTestMode.Block)
+      }
     }.width('100%').height('100%')
-      .hitTestBehavior(this.open ? HitTestMode.Default : HitTestMode.Transparent)
+      .hitTestBehavior(this.interactive && this.open ? HitTestMode.Default : HitTestMode.Transparent)
       .onAreaChange((_old: Area, area: Area) => {
         const width: number = Number(area.width);
         const height: number = Number(area.height);

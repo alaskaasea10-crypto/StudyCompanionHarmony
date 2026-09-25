@@ -3,6 +3,7 @@ import { SectionSwitcher } from '../components/SectionSwitcher';
 import { SquadMember } from '../models/StudyModels';
 import { StudyPlanet } from '../components/StudyPlanet';
 import { PlanetGrowth, PlanetGrowthService } from '../services/PlanetGrowthService';
+import { formatSubjectName } from '../utils/SubjectDisplayName';
 
 @Component
 export struct GrowthPageView {
@@ -22,7 +23,12 @@ export struct GrowthPageView {
   onOpenVideos: (moduleId: string) => void = () => {};
 
   private focusingCount(): number {
-    return this.squadMembers.filter((member: SquadMember) => member.status === '专注中').length;
+    return this.squadMembers.filter((member: SquadMember) =>
+      member.status === '专注中' && member.isDemo !== true).length;
+  }
+
+  private realMemberCount(): number {
+    return this.squadMembers.filter((member: SquadMember) => member.isDemo !== true).length;
   }
 
   private statusColor(status: string): string {
@@ -56,7 +62,7 @@ export struct GrowthPageView {
               .backgroundColor('#F0F1F6').padding({ left: 6, right: 6, top: 3, bottom: 3 }).borderRadius(8)
           }
         }.width('100%')
-        Text(member.currentTask).width('100%').fontSize(12).fontColor('#777C90').maxLines(1)
+        Text(formatSubjectName(member.currentTask)).width('100%').fontSize(12).fontColor('#777C90').maxLines(1)
         Text(`${member.status} · 今日${member.todayMinutes}分钟 · 连续${member.streakDays}天`)
           .width('100%').fontSize(10).fontColor(this.statusColor(member.status))
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
@@ -74,7 +80,7 @@ export struct GrowthPageView {
   build() {
     Scroll() {
       Column({ space: 16 }) {
-        PageHeader({ icon: '🌱', title: '成长与小队', subtitle: '低打扰共学 · 星球成长 · 校园服务' })
+        PageHeader({ icon: '🌱', title: '成长与小队', subtitle: '星球成长 · 校园服务' })
         SectionSwitcher({
           selectedIndex: 1,
           firstTitle: '专注空间',
@@ -89,11 +95,9 @@ export struct GrowthPageView {
           Row() {
             Column({ space: 3 }) {
               Text('我的学习小队').fontSize(18).fontWeight(FontWeight.Bold).fontColor('#25283A')
-              Text(`${this.squadMembers.length}位成员 · ${this.focusingCount()}人正在专注`)
+              Text(`${this.realMemberCount()}位真实成员 · ${this.focusingCount()}人正在专注`)
                 .fontSize(11).fontColor('#9397A9')
             }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-            Text('低打扰共学').fontSize(10).fontColor('#5B5FEF').backgroundColor('#EEEDFF')
-              .padding({ left: 9, right: 9, top: 6, bottom: 6 }).borderRadius(12)
           }.width('100%')
           Row({ space: 12 }) {
             StudyPlanet({ stage: this.planet.stage })

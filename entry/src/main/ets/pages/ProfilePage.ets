@@ -1,5 +1,6 @@
 import { PageHeader } from '../components/PageHeader';
 import { UserAvatar } from '../components/UserAvatar';
+import { formatSubjectName } from '../utils/SubjectDisplayName';
 
 @Component
 export struct ProfilePageView {
@@ -111,7 +112,7 @@ export struct ProfilePageView {
           Row() {
             Text('当前科目').fontSize(14).fontColor('#8B90A5')
             Blank()
-            Text(this.profileSubject).fontSize(14).fontWeight(FontWeight.Medium)
+            Text(formatSubjectName(this.profileSubject)).fontSize(14).fontWeight(FontWeight.Medium)
           }.width('100%')
           Row() {
             Text('考试日期').fontSize(14).fontColor('#8B90A5')

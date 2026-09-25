@@ -39,12 +39,14 @@ const completedRound = (s, now, wrong) => {
 const makeInput = evidence => ({
   requestText:'请帮我补习矩阵乘法', profile: { name:'测试',grade:'大二',major:'计算机',subject:'线性代数',
     goal:'巩固',examDate:'2026-10-01',dailyMinutes:60,preferredTime:'晚间',learningStyle:'练习',supportStyle:'温和' },
-  date:'2026-09-08',examDays:23,energyState:'一般',scheduleReady:false,scheduleItems:[],tasks:[],
+  date:'2026-09-08',examDays:23,energyState:'一般',scheduleReady:false,scheduleItems:[],
+  tasks:[{id:'real-linear-task',title:'一般练习',subject:'线性代数',minutes:20,completed:false}],
+  confirmedAvailableMinutes:15,localDailyPlanTaskIds:['real-linear-task'],eligibleTaskIds:['real-linear-task'],
   metrics:{todayFocusMinutes:45,todayFocusSessionCount:1,quizAttemptCount:0,quizCorrectCount:0},
   quizAttempts:[],knowledgeMastery:[],bankEvidence:evidence
 });
 const plan = { summary:'原始计划',detectedSubject:'线性代数',recommendationReasons:['模型理由'],
-  tasks:[{title:'一般练习',subject:'线性代数',type:'practice',minutes:20,priority:1,reason:'复习'}],
+  tasks:[{taskId:'real-linear-task',title:'一般练习',subject:'线性代数',type:'practice',minutes:15,priority:1,reason:'复习'}],
   totalMinutes:20,source:'openpangu',model:'test',usage:{promptTokens:0,completionTokens:0,totalTokens:0} };
 async function main() {
   let s = bank.start(bank.empty(),100);

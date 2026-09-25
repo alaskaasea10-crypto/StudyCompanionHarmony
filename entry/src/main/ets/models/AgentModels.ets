@@ -1,4 +1,4 @@
-import { AcademicGoal, KnowledgeMastery, ScheduleItem, StudyTask } from './StudyModels';
+import { AcademicGoal, FocusRecord, KnowledgeMastery, ScheduleItem, StudyTask, TodayStudyOverride } from './StudyModels';
 import { BankLearningEvidence } from './QuestionBankModels';
 
 export interface QuizFeedbackPayload {
@@ -30,7 +30,15 @@ export interface AgentContextPayload {
   date: string;
   examDays: number;
   energyState: string;
-  availableMinutesToday: number;
+  // Only present when the user confirmed today's available time.
+  availableMinutesToday?: number;
+  todayStudyOverride?: TodayStudyOverride;
+  localDailyPlanTaskIds?: string[];
+  localDailyPlanMinutes?: number[];
+  eligibleTaskIds?: string[];
+  protectedTaskId?: string;
+  protectedStage?: string;
+  recentFocusRecords?: FocusRecord[];
   dailyTargetRemainingMinutes: number;
   appendMode?: boolean;
   scheduleReady: boolean;
@@ -51,6 +59,7 @@ export interface AgentPlanRequest {
 }
 
 export interface AgentGeneratedTask {
+  taskId?: string;
   title: string;
   subject: string;
   type: string;
@@ -82,6 +91,9 @@ export interface AgentPlan {
   source: string;
   model: string;
   usage: AgentUsage;
+  agentMode?: string;
+  toolCalls?: string[];
+  rounds?: number;
 }
 
 export interface AgentApiResponse {

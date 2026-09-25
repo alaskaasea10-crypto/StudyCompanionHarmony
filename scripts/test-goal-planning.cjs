@@ -6,6 +6,7 @@ const later={id:'later',title:'课程项目',type:'项目',subject:'数据结构
 const urgent={id:'urgent',title:'线代考试',type:'考试',subject:'线性代数',deadline:'2026-09-11',estimatedMinutes:300,completed:false,createdAt:2};
 const tasks=[{title:'复习矩阵',subject:'线性代数',minutes:20,completed:false}];
 assert.equal(g.daysUntil('2026-09-11',now),2);assert.equal(g.prioritize([later,urgent],tasks,now).goal.id,'urgent');
+assert.equal(g.daysUntil('2026-02-31',now),999);assert.equal(g.daysUntil('09/11/2026',now),999);
 assert.equal(g.prioritize([{...urgent,completed:true},later],tasks,now).goal.id,'later');
 assert.equal(g.prioritize([],tasks,now),undefined);
 const decomposed=g.decompose(urgent);assert.equal(decomposed.length,4);assert.equal(decomposed[3].dueDate,'2026-09-11');
@@ -14,4 +15,8 @@ const first=g.taskFor({...urgent,milestones:decomposed},decomposed[0]);
 assert.equal(first.goalId,'urgent');assert.equal(first.milestoneId,decomposed[0].id);assert.equal(first.source,'goal-milestone');
 assert.equal(g.nextMilestone({...urgent,milestones:decomposed}).id,decomposed[0].id);
 assert.equal(g.nextMilestone({...urgent,milestones:decomposed.map((m,i)=>({...m,completed:i===0}))}).id,decomposed[1].id);
-console.log('PASS: goal deadline priority, four staged milestones, linked task, advancement and completed-goal exclusion');
+const edited=g.update({...urgent,milestones:decomposed},'期末复习','线性代数','2026-09-18',480);
+assert.equal(edited.id,urgent.id);assert.equal(edited.title,'期末复习');assert.equal(edited.subject,'线性代数');
+assert.equal(edited.deadline,'2026-09-18');assert.equal(edited.estimatedMinutes,480);assert.equal(edited.createdAt,urgent.createdAt);
+assert.equal(edited.milestones[0].id,decomposed[0].id);assert.equal(edited.completed,urgent.completed);
+console.log('PASS: goal priority, milestones, linked task, advancement, exclusion and identity-preserving edit');

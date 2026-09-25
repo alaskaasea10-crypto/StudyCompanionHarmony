@@ -33,7 +33,8 @@ import {
   SquadMember,
   StudyMetrics,
   StudyStateSnapshot,
-  StudyTask
+  StudyTask,
+  TodayStudyOverride
 } from '../models/StudyModels';
 import { AcademicGoal, GoalMilestone } from '../models/StudyModels';
 import { ScheduleImportResult } from '../models/ScheduleImportModels';
@@ -56,6 +57,7 @@ import { LearningContextInput, LearningDecisionPolicy } from '../services/Learni
 import { LearningFeedbackService } from '../services/LearningFeedbackService';
 import { LearningPlanningOrchestrator } from '../services/LearningPlanningOrchestrator';
 import { PlanCommitService } from '../services/PlanCommitService';
+import { PlanValidator } from '../services/PlanValidator';
 import { RecommendationResult, RecommendationService } from '../services/RecommendationService';
 import { StudyDataCenter } from '../services/StudyDataCenter';
 import { StudyRepository } from '../services/StudyRepository';
@@ -63,12 +65,16 @@ import { StudyWidgetService } from '../services/StudyWidgetService';
 import { StudyLiveViewService } from '../services/StudyLiveViewService';
 import { StudyActionRouter, StudyExternalAction } from '../services/StudyActionRouter';
 import { ScheduleImportClient } from '../services/ScheduleImportClient';
+import { ScheduleEditingService } from '../services/ScheduleEditingService';
 import { QuizService } from '../services/QuizService';
 import { KnowledgeMasteryService } from '../services/KnowledgeMasteryService';
 import { AvatarService } from '../services/AvatarService';
 import { SquadService } from '../services/SquadService';
 import { DailyAction, DailyActionService } from '../services/DailyActionService';
 import { LearningActionService } from '../services/LearningActionService';
+import { TodayStudyOverrideService } from '../services/TodayStudyOverrideService';
+import { StudyTaskDeletionResult, StudyTaskDeletionService } from '../services/StudyTaskDeletionService';
+import { StudyDecisionDebug } from '../services/StudyDecisionDebug';
 import { AgentDecisionResult, AgentDecisionService } from '../services/AgentDecisionService';
 import { TaskOutcomeService } from '../services/TaskOutcomeService';
 import { ActionDeferral } from '../models/StudyModels';
@@ -126,6 +132,7 @@ export struct Index {
   @State newGoalTitle: string = '';
   @State newGoalSubject: string = '';
   @State newGoalDeadline: string = '';
+  @State newGoalEstimatedMinutes: string = '';
   @State energyState: string = '一般';
   @State agentInput: string = '';
   @State agentGenerated: boolean = false;
@@ -144,6 +151,8 @@ export struct Index {
   @State quizFeedbackMessage: string = '';
   @State agentFeedbackMode: boolean = false;
   @State floatingAgentOpen: boolean = false;
+  @State floatingAgentHintVisible: boolean = true;
+  @State businessOverlayOpen: boolean = false;
   @State floatingAgentMode: string = 'planning';
   @State floatingAgentInput: string = '';
   @State floatingAgentMessages: AgentConversationMessage[] = [];
@@ -174,10 +183,13 @@ export struct Index {
   @State avatarStatus: string = '头像仅保存在本机';
   @State actionDeferrals: ActionDeferral[] = [];
   @State preferredTaskId: string = '';
+  @State todayStudyOverride: TodayStudyOverride = { date: '' };
+  @State deletedTaskIds: string[] = [];
   @State actionClock: number = Date.now();
   @State actionMessage: string = '';
   @State resultNote: string = '';
   @State resultChecked: boolean = false;
+  @State resultExperience: string = '';
   private actionClockId: number = -1;
   private timerId: number = -1;
   private agentRequestId: number = 0;
@@ -292,10 +304,17 @@ export struct Index {
     if (route.target === 'learning') { this.currentTab = 8; return; }
     if (route.target === 'support') {
       this.floatingAgentMode = 'support';
+      this.floatingAgentHintVisible = false;
       this.floatingAgentOpen = true;
       return;
     }
     if (route.target === 'next') {
+      const action: DailyAction = this.dailyAction();
+      if (route.taskId.length > 0 && action.taskId !== route.taskId) {
+        this.currentTab = 0;
+        this.actionMessage = '学习安排已经更新，请查看现在最适合做的一项';
+        return;
+      }
       if (this.isRunning) { this.currentTab = 3; } else { this.runDailyAction(); }
       return;
     }
@@ -387,9 +406,14 @@ export struct Index {
     this.setupScheduleReady = snapshot.setupScheduleReady === true;
     this.actionDeferrals = (snapshot.actionDeferrals ?? []).filter((item: ActionDeferral) =>
       typeof item.key === 'string' && Number.isFinite(item.until) && item.until > Date.now());
-    this.preferredTaskId = snapshot.preferredTaskId ?? '';
+    // 旧版 preferredTaskId 没有日期，不能迁移成永久的今日偏好。
+    this.todayStudyOverride = TodayStudyOverrideService.active(snapshot) ?? { date: '' };
+    this.preferredTaskId = this.todayStudyOverride.preferredTaskId ?? '';
+    this.deletedTaskIds = Array.from(new Set((snapshot.deletedTaskIds ?? [])
+      .filter((id: string) => typeof id === 'string' && id.length > 0)));
     const storedTasks: StudyTask[] = Array.isArray(snapshot.tasks) ? snapshot.tasks : [];
-    this.tasks = storedTasks.length > 0 ? storedTasks : createDemoTasks(this.profileSubject,
+    // 已保存的空数组代表用户确实删除了全部待办，不能在重启时重新注入初始任务。
+    this.tasks = Array.isArray(snapshot.tasks) ? storedTasks : createDemoTasks(this.profileSubject,
       this.profileDailyMinutes);
     this.tasks = StudyDataCenter.normalizeTasks(this.tasks).map((task: StudyTask) => {
       if (task.completed) { return task; }
@@ -404,8 +428,10 @@ export struct Index {
       [GoalPlanningService.create(`${this.profileSubject}考试`, this.profileSubject,
         this.profileExamDate, this.profileDailyMinutes * Math.max(1, this.examDays()))];
     this.ensureGoalMilestoneTask();
-    this.currentTaskIndex = Math.min(Math.max(0, snapshot.currentTaskIndex), this.tasks.length - 1);
-    this.focusMinutes = Math.min(240, Math.max(1, snapshot.focusMinutes ?? this.tasks[0].minutes));
+    this.currentTaskIndex = this.tasks.length === 0 ? 0 :
+      Math.min(Math.max(0, snapshot.currentTaskIndex), this.tasks.length - 1);
+    this.focusMinutes = Math.min(240, Math.max(1,
+      snapshot.focusMinutes ?? this.tasks[0]?.minutes ?? this.profileDailyMinutes));
     const totalFocusSeconds: number = this.focusMinutes * 60;
     this.focusElapsedSeconds = Math.min(totalFocusSeconds, Math.max(0, snapshot.focusElapsedSeconds ?? 0));
     this.focusSegmentStartedAt = Math.max(0, snapshot.focusSegmentStartedAt ?? 0);
@@ -447,9 +473,12 @@ export struct Index {
 
   private snapshot(): StudyStateSnapshot {
     return {
-      schemaVersion: 7,
+      schemaVersion: 9,
       actionDeferrals: this.actionDeferrals,
-      preferredTaskId: this.preferredTaskId,
+      todayStudyOverride: this.todayStudyOverride,
+      deletedTaskIds: this.deletedTaskIds,
+      preferredTaskId: this.todayStudyOverride.date === TodayStudyOverrideService.date(this.actionClock) ?
+        this.todayStudyOverride.preferredTaskId ?? '' : '',
       profileCompleted: this.profileCompleted,
       profileAvatarUri: this.profileAvatarUri,
       profileName: this.profileName,
@@ -586,6 +615,9 @@ export struct Index {
   private applyProfileToTasks(): void {
     const primaryMinutes: number = Math.min(25, Math.max(10, this.profileDailyMinutes));
     this.tasks = createDemoTasks(this.profileSubject, this.profileDailyMinutes);
+    this.todayStudyOverride = { date: '' };
+    this.deletedTaskIds = [];
+    this.preferredTaskId = '';
     this.currentTaskIndex = 0;
     this.focusMinutes = primaryMinutes;
     this.remainingSeconds = primaryMinutes * 60;
@@ -849,12 +881,46 @@ export struct Index {
       this.scheduleImportStatus = 'error';
       return;
     }
-    this.scheduleItems = this.scheduleDraftItems;
+    const prepared: ScheduleItem[] | undefined = ScheduleEditingService.prepare(this.scheduleDraftItems);
+    if (prepared === undefined) {
+      this.scheduleImportMessage = ScheduleEditingService.validationError(this.scheduleDraftItems);
+      this.scheduleImportStatus = 'reviewing';
+      return;
+    }
+    this.scheduleItems = prepared;
     this.setupScheduleReady = true;
     this.scheduleImportStatus = 'imported';
     this.scheduleImportMessage = `已同步 ${this.scheduleItems.length} 门课程`;
     this.scheduleDraftItems = [];
     this.persistSilently();
+  }
+
+  private updateScheduleDraftItems(items: ScheduleItem[]): void {
+    this.scheduleDraftItems = ScheduleEditingService.copy(items);
+    this.scheduleImportMessage = `正在核对 ${items.length} 门课程`;
+  }
+
+  private async saveScheduleEdits(items: ScheduleItem[]): Promise<boolean> {
+    const prepared: ScheduleItem[] | undefined = ScheduleEditingService.prepare(items);
+    if (prepared === undefined) { return false; }
+    const previousItems: ScheduleItem[] = this.scheduleItems;
+    const previousSource: string = this.scheduleImportSource;
+    const previousStatus: string = this.scheduleImportStatus;
+    this.scheduleItems = prepared;
+    this.setupScheduleReady = true;
+    this.scheduleImportSource = '手动编辑';
+    this.scheduleImportStatus = 'imported';
+    this.scheduleImportMessage = `已保存 ${prepared.length} 门课程`;
+    try {
+      await this.persistState();
+      return true;
+    } catch (error) {
+      this.scheduleItems = previousItems;
+      this.scheduleImportSource = previousSource;
+      this.scheduleImportStatus = previousStatus;
+      this.scheduleImportMessage = '课表保存失败，已保留原记录';
+      return false;
+    }
   }
 
   private useDemoSchedule(): void {
@@ -987,87 +1053,163 @@ export struct Index {
     const action: DailyAction = this.dailyAction();
     if (action.key === undefined || action.stage === 'resume' || action.stage === 'wait' || action.stage === 'done') { return; }
     const now: number = Date.now();
-    const until: number = kind === 'later' ? now + 30 * 60000 :
-      (Math.floor((now + 8 * 3600000) / 86400000) + 1) * 86400000 - 8 * 3600000;
+    const nextMidnight: number = (Math.floor((now + 8 * 3600000) / 86400000) + 1) * 86400000 - 8 * 3600000;
+    const until: number = kind === 'later' ? Math.min(now + 30 * 60000, nextMidnight) : nextMidnight;
     const previous: ActionDeferral[] = this.actionDeferrals;
+    const previousOverride: TodayStudyOverride = this.todayStudyOverride;
     this.actionDeferrals = this.actionDeferrals.filter((item: ActionDeferral) => item.until > now && item.key !== action.key)
       .concat([{ key: action.key, until: until, kind: kind }]);
+    if (kind === 'skip' && action.key.startsWith('task:')) {
+      const active: TodayStudyOverride = this.todayStudyOverride.date === this.beijingDayKey() ?
+        this.todayStudyOverride : { date: this.beijingDayKey() };
+      const taskId: string = action.key.substring(5);
+      this.todayStudyOverride = { date: active.date, availableMinutes: active.availableMinutes,
+        preferredTaskId: active.preferredTaskId, preferredSubject: active.preferredSubject,
+        temporaryTaskIds: active.temporaryTaskIds,
+        skippedTaskIds: Array.from(new Set((active.skippedTaskIds ?? []).concat([taskId]))) };
+    }
     this.actionMessage = kind === 'later' ? '已延后 30 分钟，原任务保留' : '今天先跳过，明天再安排';
     this.agentRequestId++; this.agentLoading = false; this.agentGenerated = false;
     try { await this.persistState(); } catch (error) {
       this.actionDeferrals = previous;
+      this.todayStudyOverride = previousOverride;
       this.actionMessage = '暂缓未保存，请重试';
     }
   }
 
   private undoDeferral(): void {
     this.actionDeferrals = [];
+    if (this.todayStudyOverride.date === this.beijingDayKey()) {
+      this.todayStudyOverride = { date: this.todayStudyOverride.date,
+        availableMinutes: this.todayStudyOverride.availableMinutes,
+        preferredTaskId: this.todayStudyOverride.preferredTaskId,
+        preferredSubject: this.todayStudyOverride.preferredSubject,
+        temporaryTaskIds: this.todayStudyOverride.temporaryTaskIds, skippedTaskIds: [] };
+    }
     this.actionMessage = '';
     this.persistSilently();
   }
 
-  private adjustTodayTask(taskIndex: number, title: string, subject: string, minutes: number): void {
-    const cleanTitle: string = title.trim();
-    if (cleanTitle.length === 0) { return; }
-    const cleanSubject: string = subject.trim().length > 0 ? subject.trim() : this.profileSubject;
-    const safeMinutes: number = Math.min(120, Math.max(5, minutes));
-    if (this.isRunning || this.focusElapsedSeconds > 0) { this.archiveInterruptedFocus(); }
-    let targetIndex: number = taskIndex;
-    let targetId: string = '';
-    if (taskIndex >= 0 && taskIndex < this.tasks.length && !this.tasks[taskIndex].completed) {
-      const updated: StudyTask = JSON.parse(JSON.stringify(this.tasks[taskIndex])) as StudyTask;
-      updated.id = updated.id ?? `manual-${Date.now()}`;
-      updated.title = cleanTitle;
-      updated.subject = cleanSubject;
-      updated.minutes = safeMinutes;
-      updated.source = updated.source ?? 'manual-adjustment';
-      this.tasks = this.tasks.map((task: StudyTask, index: number) => index === taskIndex ? updated : task);
-      targetId = updated.id ?? '';
-    } else {
-      const createdAt: number = Date.now();
-      const task: StudyTask = {
-        id: `manual-${createdAt}`,
-        title: cleanTitle,
-        subject: cleanSubject,
-        minutes: safeMinutes,
-        completed: false,
-        source: 'manual-adjustment',
-        createdAt: createdAt,
-        completedAt: 0
-      };
+  private adjustTodayTask(override: TodayStudyOverride, temporaryTitle: string, temporarySubject: string,
+    temporaryMinutes: number): void {
+    const date: string = this.beijingDayKey();
+    if (override.date !== date) { return; }
+    const previous: TodayStudyOverride = this.todayStudyOverride.date === date ? this.todayStudyOverride : { date: date };
+    const available: number | undefined = override.availableMinutes === undefined ? undefined :
+      Math.min(240, Math.max(0, Math.floor(override.availableMinutes)));
+    const skippedIds: string[] = (override.skippedTaskIds ?? []).filter((id: string) =>
+      this.tasks.some((task: StudyTask) => task.id === id && !task.completed));
+    let preferredId: string = override.preferredTaskId ?? '';
+    if (!this.tasks.some((task: StudyTask) => task.id === preferredId && !task.completed)) { preferredId = ''; }
+    if (skippedIds.includes(preferredId)) { preferredId = ''; }
+    const temporaryIds: string[] = (previous.temporaryTaskIds ?? []).slice();
+    const title: string = temporaryTitle.trim();
+    if (title.length > 0) {
+      const now: number = Date.now();
+      const id: string = `today-${now}-${this.tasks.length}`;
+      const task: StudyTask = { id: id, title: title, subject: temporarySubject.trim() || this.profileSubject,
+        minutes: Math.min(120, Math.max(5, temporaryMinutes)), completed: false,
+        source: 'today-temporary', createdAt: now, completedAt: 0 };
       this.tasks = this.tasks.concat([task]);
-      targetIndex = this.tasks.length - 1;
-      targetId = task.id ?? '';
+      temporaryIds.push(id);
+      preferredId = id;
     }
-    this.preferredTaskId = targetId;
-    this.currentTaskIndex = targetIndex;
-    this.focusMinutes = safeMinutes;
-    this.remainingSeconds = safeMinutes * 60;
-    this.focusElapsedSeconds = 0;
-    this.focusSegmentStartedAt = 0;
-    this.focusSessionCredited = false;
-    this.isRunning = false;
-    this.actionDeferrals = this.actionDeferrals.filter((item: ActionDeferral) => item.key !== `task:${targetId}`);
+    this.todayStudyOverride = { date: date, availableMinutes: available,
+      preferredTaskId: preferredId, preferredSubject: override.preferredSubject?.trim() ?? '',
+      skippedTaskIds: skippedIds, temporaryTaskIds: temporaryIds };
+    this.preferredTaskId = preferredId;
+    this.actionDeferrals = this.actionDeferrals.filter((item: ActionDeferral) => item.kind !== 'skip' ||
+      !item.key.startsWith('task:') || skippedIds.includes(item.key.substring(5)));
+    if (preferredId.length > 0) {
+      this.actionDeferrals = this.actionDeferrals.filter((item: ActionDeferral) => item.key !== `task:${preferredId}`);
+    }
     this.actionClock = Date.now();
-    this.actionMessage = '已按你的安排更新“现在要做什么”';
+    this.actionMessage = '今天的安排已更新；正在进行的专注不会被打断';
+    if (typeof StudyDecisionDebug !== 'undefined') {
+      const adjustedTask: StudyTask | undefined = this.tasks.find((task: StudyTask) => task.id === preferredId);
+      StudyDecisionDebug.event('today-override-updated', preferredId, adjustedTask?.subject ?? '',
+        adjustedTask?.title ?? '', available === undefined ? 'availableMinutes=unknown' : `availableMinutes=${available}`);
+    }
     this.persistSilently();
   }
 
-  private recordTaskResult(index: number, passed: boolean, note: string): void {
+  private async deleteTodayTask(taskId: string): Promise<string> {
+    const taskIndex: number = this.tasks.findIndex((task: StudyTask) => task.id === taskId);
+    const task: StudyTask | undefined = taskIndex >= 0 ? this.tasks[taskIndex] : undefined;
+    const currentId: string = this.currentTask().id ?? '';
+    const hasActiveFocusSession: boolean = this.isRunning || (taskId === currentId &&
+      this.focusElapsedSeconds > 0 && this.remainingSeconds > 0);
+    const blocked: string = StudyTaskDeletionService.blockReason(task, currentId, hasActiveFocusSession);
+    if (blocked.length > 0) { return blocked; }
+
+    const previousTasks: StudyTask[] = this.tasks;
+    const previousOverride: TodayStudyOverride = this.todayStudyOverride;
+    const previousDeferrals: ActionDeferral[] = this.actionDeferrals;
+    const previousDeletedIds: string[] = this.deletedTaskIds;
+    const previousTaskIndex: number = this.currentTaskIndex;
+    const previousPreferredTaskId: string = this.preferredTaskId;
+    const previousCurrentId: string = previousTasks[previousTaskIndex]?.id ?? '';
+    const result: StudyTaskDeletionResult = StudyTaskDeletionService.remove(taskId, previousTasks,
+      previousOverride, previousDeferrals, previousDeletedIds);
+    this.tasks = result.tasks;
+    this.todayStudyOverride = result.todayStudyOverride;
+    this.actionDeferrals = result.actionDeferrals;
+    this.deletedTaskIds = result.deletedTaskIds;
+    this.preferredTaskId = this.todayStudyOverride.preferredTaskId ?? '';
+    const retainedCurrentIndex: number = this.tasks.findIndex((item: StudyTask) => item.id === previousCurrentId);
+    this.currentTaskIndex = retainedCurrentIndex >= 0 ? retainedCurrentIndex :
+      Math.min(Math.max(0, previousTaskIndex), Math.max(0, this.tasks.length - 1));
+    this.actionClock = Date.now();
+    this.agentRequestId++;
+    this.agentLoading = false;
+    this.agentGenerated = false;
+    try {
+      await this.persistState();
+      this.actionMessage = '待办已删除，今天的安排已重新计算';
+      return '';
+    } catch (error) {
+      this.tasks = previousTasks;
+      this.todayStudyOverride = previousOverride;
+      this.actionDeferrals = previousDeferrals;
+      this.deletedTaskIds = previousDeletedIds;
+      this.currentTaskIndex = previousTaskIndex;
+      this.preferredTaskId = previousPreferredTaskId;
+      this.actionMessage = '删除未保存，原待办已恢复';
+      return '删除未保存，原待办已恢复，请重试。';
+    }
+  }
+
+  private recordTaskResult(index: number, passed: boolean, note: string, experience: string = ''): void {
     const task: StudyTask | undefined = this.tasks[index];
     if (task === undefined || task.completed) { return; }
-    const updated: StudyTask = TaskOutcomeService.submit(task, passed, note, Date.now());
+    const updated: StudyTask = TaskOutcomeService.submit(task, passed, note, Date.now(),
+      experience === 'smooth' || experience === 'normal' || experience === 'struggling' ? experience : undefined);
     this.tasks = this.tasks.map((item: StudyTask, i: number) => i === index ? updated : item);
-    if (updated.completed && updated.id === this.preferredTaskId) { this.preferredTaskId = ''; }
+    if (updated.completed && updated.id === this.todayStudyOverride.preferredTaskId) {
+      this.todayStudyOverride = { date: this.todayStudyOverride.date,
+        availableMinutes: this.todayStudyOverride.availableMinutes, preferredTaskId: '',
+        preferredSubject: this.todayStudyOverride.preferredSubject,
+        skippedTaskIds: this.todayStudyOverride.skippedTaskIds,
+        temporaryTaskIds: this.todayStudyOverride.temporaryTaskIds };
+      this.preferredTaskId = '';
+    }
     if (passed) { this.advanceGoalMilestone(updated, true); }
+    if (typeof StudyDecisionDebug !== 'undefined') {
+      StudyDecisionDebug.event('feedback-submitted', updated.id ?? '', updated.subject, updated.title,
+        `completed=${updated.completed}`);
+      if (updated.completed) {
+        StudyDecisionDebug.event('task-completed', updated.id ?? '', updated.subject, updated.title);
+      }
+    }
     this.actionDeferrals = this.actionDeferrals.filter((item: ActionDeferral) => item.key !== `task:${task.id}`);
     this.persistSilently();
   }
 
   private submitSelfResult(): void {
-    if (!this.resultChecked || this.resultNote.trim().length < 4 || TaskOutcomeService.kind(this.currentTask()) !== 'self') { return; }
-    this.recordTaskResult(this.currentTaskIndex, true, this.resultNote.trim());
-    this.resultNote = ''; this.resultChecked = false;
+    if (!this.resultChecked || this.resultExperience.length === 0 || this.resultNote.trim().length < 4 ||
+      TaskOutcomeService.kind(this.currentTask()) !== 'self') { return; }
+    this.recordTaskResult(this.currentTaskIndex, true, this.resultNote.trim(), this.resultExperience);
+    this.resultNote = ''; this.resultChecked = false; this.resultExperience = '';
     this.actionMessage = '';
     this.currentTab = 0;
   }
@@ -1080,12 +1222,15 @@ export struct Index {
     this.focusSegmentStartedAt = 0; this.focusSessionCredited = true;
     this.currentTaskIndex = index;
     this.focusMinutes = this.tasks[index].minutes;
-    this.resultNote = ''; this.resultChecked = false;
+    this.resultNote = ''; this.resultChecked = false; this.resultExperience = '';
     const task: StudyTask = this.tasks[index];
     if (!task.completed && task.outcome !== 'focused' && task.outcome !== 'submitted') {
       this.tasks = this.tasks.map((item: StudyTask, i: number) => i === index ? TaskOutcomeService.focused(item, Date.now()) : item);
     }
     this.quizPending = false;
+    if (typeof StudyDecisionDebug !== 'undefined') {
+      StudyDecisionDebug.event('feedback-pending', task.id ?? '', task.subject, task.title);
+    }
     this.currentTab = 3;
     this.persistSilently();
   }
@@ -1098,12 +1243,15 @@ export struct Index {
     const title: string = this.newGoalTitle.trim();
     const subject: string = this.newGoalSubject.trim();
     const deadline: string = this.newGoalDeadline.trim();
-    if (title.length === 0 || subject.length === 0 || GoalPlanningService.daysUntil(deadline) === 999) { return; }
-    const goal: AcademicGoal = GoalPlanningService.create(title, subject, deadline, 300, '学习目标');
+    const estimatedText: string = this.newGoalEstimatedMinutes.trim();
+    const estimated: number = Number(estimatedText);
+    if (title.length === 0 || subject.length === 0 || GoalPlanningService.daysUntil(deadline) === 999 ||
+      !/^\d+$/.test(estimatedText) || estimated < 60 || estimated > 6000) { return; }
+    const goal: AcademicGoal = GoalPlanningService.create(title, subject, deadline, estimated, '学习目标');
     this.academicGoals = this.academicGoals.concat([goal]);
     const first: GoalMilestone | undefined = GoalPlanningService.nextMilestone(goal);
     if (first !== undefined) { this.tasks = this.tasks.concat([GoalPlanningService.taskFor(goal, first)]); }
-    this.newGoalTitle = ''; this.newGoalSubject = ''; this.newGoalDeadline = '';
+    this.newGoalTitle = ''; this.newGoalSubject = ''; this.newGoalDeadline = ''; this.newGoalEstimatedMinutes = '';
     this.persistSilently();
   }
 
@@ -1115,12 +1263,41 @@ export struct Index {
     this.persistSilently();
   }
 
+  private async updateAcademicGoal(id: string, title: string, subject: string, deadline: string,
+    estimatedMinutes: number): Promise<boolean> {
+    if (title.trim().length === 0 || subject.trim().length === 0 ||
+      GoalPlanningService.daysUntil(deadline.trim()) === 999 || estimatedMinutes < 60 || estimatedMinutes > 6000) {
+      return false;
+    }
+    const previous: AcademicGoal[] = this.academicGoals;
+    let found: boolean = false;
+    this.academicGoals = this.academicGoals.map((goal: AcademicGoal): AcademicGoal => {
+      if (goal.id !== id) { return goal; }
+      found = true;
+      return GoalPlanningService.update(goal, title, subject, deadline, estimatedMinutes);
+    });
+    if (!found) { this.academicGoals = previous; return false; }
+    try {
+      await this.persistState();
+      return true;
+    } catch (error) {
+      this.academicGoals = previous;
+      this.actionMessage = '学习目标保存失败，已保留原记录';
+      return false;
+    }
+  }
+
   private ensureGoalMilestoneTask(): void {
-    const priority: GoalPriority | undefined = GoalPlanningService.prioritize(this.academicGoals, this.tasks);
-    if (priority === undefined) { return; }
-    const milestone: GoalMilestone | undefined = GoalPlanningService.nextMilestone(priority.goal);
-    if (milestone === undefined || this.tasks.some((task: StudyTask) => task.milestoneId === milestone.id)) { return; }
-    this.tasks = this.tasks.concat([GoalPlanningService.taskFor(priority.goal, milestone)]);
+    // 每个真实目标都保留自己的下一阶段，避免只有 priorityGoal 拥有可调度任务。
+    this.academicGoals.filter((goal: AcademicGoal) => !goal.completed).forEach((goal: AcademicGoal) => {
+      const milestone: GoalMilestone | undefined = GoalPlanningService.nextMilestone(goal);
+      const milestoneTask: StudyTask | undefined = milestone === undefined ? undefined :
+        GoalPlanningService.taskFor(goal, milestone);
+      if (milestoneTask !== undefined && !(this.deletedTaskIds ?? []).includes(milestoneTask.id ?? '') &&
+        !this.tasks.some((task: StudyTask) => task.milestoneId === milestoneTask.milestoneId)) {
+        this.tasks = this.tasks.concat([milestoneTask]);
+      }
+    });
   }
 
   private advanceGoalMilestone(task: StudyTask, completed: boolean): void {
@@ -1178,7 +1355,10 @@ export struct Index {
     if (this.tasks[index].outcome === 'focused' || this.tasks[index].outcome === 'submitted') {
       this.openTaskResult(index); return;
     }
-    const allowed: number = Math.min(LearningActionService.budget(this.snapshot()), LearningActionService.freeMinutes(this.snapshot()));
+    const focusSnapshot: StudyStateSnapshot = this.snapshot();
+    const free: number | undefined = LearningActionService.freeMinutes(focusSnapshot);
+    const allowed: number = Math.min(LearningActionService.budget(focusSnapshot),
+      free === undefined ? this.tasks[index].minutes : free);
     if (allowed < 5) { this.actionMessage = '当前时间不足，任务已保留'; this.currentTab = 0; return; }
     this.focusMinutes = Math.min(minutes > 0 ? minutes : this.tasks[index].minutes, allowed);
     const started: StudyTask = JSON.parse(JSON.stringify(this.tasks[index])) as StudyTask;
@@ -1197,6 +1377,10 @@ export struct Index {
     this.quizFeedbackMessage = '';
     this.agentFeedbackMode = false;
     this.currentTab = 3;
+    if (typeof StudyDecisionDebug !== 'undefined') {
+      StudyDecisionDebug.event('focus-started', started.id ?? '', started.subject, started.title,
+        `minutes=${this.focusMinutes}`);
+    }
     this.startTimer();
   }
 
@@ -1289,17 +1473,26 @@ export struct Index {
   }
 
   private finishFocus(): void {
-    if (this.currentTask().completed || this.currentTask().outcome === 'focused' || this.currentTask().outcome === 'submitted') { return; }
+    const task: StudyTask = this.currentTask();
+    const taskAlreadyResolved: boolean = task.completed || task.outcome === 'focused' ||
+      task.outcome === 'submitted';
     let elapsedSeconds: number = this.focusElapsedSeconds;
     if (this.isRunning) {
       elapsedSeconds = FocusClock.elapsedSeconds(elapsedSeconds, this.focusSegmentStartedAt, Date.now());
     }
     this.clearTimerInterval();
-    StudyLiveViewService.stop();
     this.isRunning = false;
     this.focusSegmentStartedAt = 0;
     this.focusElapsedSeconds = Math.min(this.focusMinutes * 60, elapsedSeconds);
     this.remainingSeconds = 0;
+    StudyLiveViewService.stop();
+    if (taskAlreadyResolved) {
+      // A completed or feedback-pending task must never leave a stale running session behind.
+      // Mark this residual session closed without writing another focus record or outcome.
+      this.focusSessionCredited = true;
+      this.persistSilently();
+      return;
+    }
     if (!this.focusSessionCredited && this.focusElapsedSeconds > 0 && this.tasks.length > 0) {
       this.todayMinutes += FocusClock.completedMinutes(this.focusElapsedSeconds);
       this.focusRecords = this.focusRecords.concat([
@@ -1314,8 +1507,12 @@ export struct Index {
       this.focusSessionCredited = true;
     }
     if (this.tasks.length > 0) {
-      const focused: StudyTask = TaskOutcomeService.focused(this.currentTask(), Date.now());
+      const focused: StudyTask = TaskOutcomeService.focused(task, Date.now());
       this.tasks = this.tasks.map((task: StudyTask, index: number) => index === this.currentTaskIndex ? focused : task);
+      if (typeof StudyDecisionDebug !== 'undefined') {
+        StudyDecisionDebug.event('focus-finished', focused.id ?? '', focused.subject, focused.title,
+          `elapsedSeconds=${this.focusElapsedSeconds}`);
+      }
       this.openTaskResult(this.currentTaskIndex);
     }
     this.persistSilently();
@@ -1367,11 +1564,29 @@ export struct Index {
   private learningContextInput(text: string, appendMode: boolean = false,
     planningBudget?: number): LearningContextInput {
     const metrics: StudyMetrics = this.studyMetrics();
-    const goal: AcademicGoal | undefined = this.activeGoal()?.goal;
+    const goals: AcademicGoal[] = this.academicGoals.filter((goal: AcademicGoal) => !goal.completed);
+    const subjects: string[] = Array.from(new Set(goals.map((goal: AcademicGoal) => goal.subject).concat(
+      this.tasks.filter((task: StudyTask) => !task.completed).map((task: StudyTask) => task.subject))));
+    const activeOverride: TodayStudyOverride | undefined = this.todayStudyOverride.date === this.beijingDayKey() ?
+      this.todayStudyOverride : undefined;
+    const realSchedule: boolean = this.setupScheduleReady && this.scheduleItems.length > 0 &&
+      this.scheduleItems.every((item: ScheduleItem) => !item.id.startsWith('demo-'));
     const dailyTargetRemaining: number = LearningActionService.budget(this.snapshot());
+    const decision: AgentDecisionResult = AgentDecisionService.decide(this.snapshot(), this.actionClock);
+    const confirmedMinutes: number | undefined = activeOverride?.availableMinutes;
     return {
       academicGoals: this.academicGoals,
-      remainingBudget: planningBudget ?? dailyTargetRemaining,
+      todayStudyOverride: activeOverride,
+      confirmedAvailableMinutes: this.bankPlanMode && planningBudget !== undefined ? planningBudget : confirmedMinutes,
+      localDailyPlanTaskIds: decision.dailyPlan.map(item => item.taskId),
+      localDailyPlanMinutes: decision.dailyPlan.map(item => item.suggestedMinutes),
+      eligibleTaskIds: LearningActionService.candidates(this.snapshot(), this.actionClock)
+        .map(item => item.task.id ?? '').filter(id => id.length > 0),
+      protectedTaskId: decision.recommendedAction.stage === 'resume' ||
+        decision.recommendedAction.stage === 'verify' ? decision.recommendedAction.taskId : undefined,
+      protectedStage: decision.recommendedAction.stage,
+      recentFocusRecords: this.focusRecords.length > 0 ? this.focusRecords.slice(-5) : undefined,
+      remainingBudget: this.bankPlanMode ? planningBudget : dailyTargetRemaining,
       dailyTargetRemainingMinutes: dailyTargetRemaining,
       appendMode: appendMode,
       requestText: text,
@@ -1379,20 +1594,22 @@ export struct Index {
         name: this.profileName,
         grade: this.profileGrade,
         major: this.profileMajor,
-        goal: goal?.title ?? this.profileGoal,
-        subject: goal?.subject ?? this.profileSubject,
-        examDate: goal?.deadline ?? this.profileExamDate,
+        goal: goals.length > 0 ? goals.map((goal: AcademicGoal) => goal.title).join('；') : this.profileGoal,
+        subject: subjects.length > 1 ? '多个课程' : subjects[0] ?? this.profileSubject,
+        examDate: goals.length === 1 ? goals[0].deadline :
+          this.profileExamDateConfirmed ? this.profileExamDate : '',
         dailyMinutes: this.profileDailyMinutes,
         preferredTime: this.profilePreferredTime,
         learningStyle: this.profileLearningStyle,
         supportStyle: this.profileSupportStyle
       },
       date: this.beijingDayKey(),
-      examDays: goal === undefined ? this.examDays() : GoalPlanningService.daysUntil(goal.deadline),
+      examDays: goals.length === 1 ? GoalPlanningService.daysUntil(goals[0].deadline) :
+        this.profileExamDateConfirmed ? this.examDays() : 999,
       energyState: this.energyState,
-      scheduleReady: this.setupScheduleReady,
-      scheduleItems: this.scheduleItems,
-      tasks: this.tasks,
+      scheduleReady: realSchedule,
+      scheduleItems: realSchedule ? this.scheduleItems : [],
+      tasks: this.tasks.filter((task: StudyTask) => TodayStudyOverrideService.currentTask(task, activeOverride)),
       metrics: metrics,
       quizAttempts: [],
       knowledgeMastery: [],
@@ -1450,6 +1667,7 @@ export struct Index {
 
   private openFloatingPlanning(prefill: string = ''): void {
     this.floatingAgentMode = 'planning';
+    this.floatingAgentHintVisible = false;
     this.floatingAgentOpen = true;
     if (prefill.length > 0) { this.floatingAgentInput = prefill; }
   }
@@ -1550,7 +1768,7 @@ export struct Index {
       this.agentError = decision.notice;
       if (fromFloating) {
         this.addFloatingMessage('assistant', decision.plan.summary.length > 0 ? decision.plan.summary :
-          '我整理了一份今天可以完成的安排，确认后才会加入待办。', 'planning');
+          '我整理了已有任务的学习节奏；确认后会把第一项设为今天优先。', 'planning');
       }
     }).catch((error: Error) => {
       if (requestId !== this.agentRequestId || !this.profileCompleted) {
@@ -1572,54 +1790,34 @@ export struct Index {
     }
     if (this.bankPlanMode) { this.acceptBankPlan(); return; }
     const wasFloating: boolean = this.floatingPlanPending;
-    const previousTaskCount: number = this.tasks.length;
-    const currentId: string = this.currentTask().id ?? '';
-    const preserveFocus: boolean = this.isRunning || this.focusElapsedSeconds > 0;
-    let committed: PlanCommitResult;
     try {
-      const availableForCommit: number = this.agentPlanBudget;
-      if (this.previewPlan().totalMinutes > availableForCommit) {
-        throw new Error('计划时长发生变化，请重新生成');
+      // Recheck against current storage: a task may have been completed while the model was responding.
+      const currentRequest: AgentPlanRequest = LearningDecisionPolicy.buildRequest(
+        this.learningContextInput(this.agentInput, wasFloating));
+      const accepted: AgentPlan = PlanValidator.validateExisting(this.previewPlan(), currentRequest);
+      const stage: string = currentRequest.context.protectedStage ?? '';
+      if (stage !== 'resume' && stage !== 'verify') {
+        const firstId: string = accepted.tasks[0].taskId ?? '';
+        const active: TodayStudyOverride = this.todayStudyOverride.date === this.beijingDayKey() ?
+          this.todayStudyOverride : { date: this.beijingDayKey() };
+        this.todayStudyOverride = { date: active.date, availableMinutes: active.availableMinutes,
+          preferredTaskId: firstId, preferredSubject: active.preferredSubject,
+          skippedTaskIds: active.skippedTaskIds, temporaryTaskIds: active.temporaryTaskIds };
       }
-      committed = wasFloating ?
-        PlanCommitService.append(this.tasks, this.previewPlan(), availableForCommit) :
-        PlanCommitService.reconcile(this.tasks, this.previewPlan(), this.activeGoal()?.goal,
-          preserveFocus ? currentId : undefined);
+      this.agentAcceptedMessage = stage === 'resume' || stage === 'verify' ?
+        '当前专注或学习反馈优先保留，完成后星球会重新安排' :
+        '已把这项设为今天优先处理；后续会随完成情况重新安排';
+      this.agentRequestId += 1;
+      this.agentGenerated = false;
+      this.floatingPlanPending = false;
+      if (wasFloating) { this.floatingAcceptedMessage = this.agentAcceptedMessage; }
+      this.agentFeedbackMode = false;
+      this.bankPlanMode = false;
+      this.persistSilently();
     } catch (error) {
-      this.agentError = error instanceof Error ? error.message : '计划暂时无法加入，请重新生成';
+      this.agentError = error instanceof Error ? error.message : '已有任务发生变化，请重新安排';
       if (wasFloating) { this.floatingAgentError = this.agentError; }
-      return;
     }
-    this.agentRequestId += 1;
-    // 当前目标不随模型推测的科目被改写。
-    this.tasks = committed.tasks;
-    if (wasFloating && previousTaskCount > 0) {
-      // 悬浮助手只追加今日待办，不改变用户正在查看或进行的任务。
-      this.currentTaskIndex = Math.min(this.currentTaskIndex, this.tasks.length - 1);
-    } else if (preserveFocus && this.tasks.some((task: StudyTask) => task.id === currentId)) {
-      this.currentTaskIndex = this.tasks.findIndex((task: StudyTask) => task.id === currentId);
-    } else {
-      this.clearTimerInterval();
-      this.currentTaskIndex = committed.currentTaskIndex;
-      this.focusMinutes = committed.firstFocusMinutes;
-      this.remainingSeconds = committed.firstFocusMinutes * 60;
-      this.focusElapsedSeconds = 0;
-      this.focusSegmentStartedAt = 0;
-      this.focusSessionCredited = false;
-      this.isRunning = false;
-    }
-    this.agentGenerated = false;
-    this.floatingPlanPending = false;
-    if (!preserveFocus) { this.quizPending = false; }
-    const addedCount: number = Math.max(0, committed.tasks.length - previousTaskCount);
-    this.agentAcceptedMessage = wasFloating ?
-      (addedCount > 0 ? `已将 ${addedCount} 项安排加入今日待办` : '相同任务已在今日待办中，没有重复添加') : this.agentFeedbackMode ?
-      `已保留完成记录，并把 Agent 调整后的任务同步到首页与番茄钟` :
-      `已同步 ${committed.tasks.length} 项任务到首页、今日待办与番茄钟`;
-    if (wasFloating) { this.floatingAcceptedMessage = this.agentAcceptedMessage; }
-    this.agentFeedbackMode = false;
-    this.bankPlanMode = false;
-    this.persistSilently();
   }
 
   private async acceptBankPlan(): Promise<void> {
@@ -1734,6 +1932,8 @@ export struct Index {
   }
 
   private selectBottomTab(index: number): void {
+    const targetTab: number = index === 0 ? 0 : (index === 1 ? 8 : (index === 2 ? 3 : 5));
+    if (this.currentTab !== targetTab) { this.floatingAgentHintVisible = false; }
     if (index === 0) {
       this.currentTab = 0;
     } else if (index === 1) {
@@ -1779,7 +1979,7 @@ export struct Index {
     this.agentAcceptedMessage = correct ? '本次小测通过，任务已推进' : '答题已记录，先巩固再验证';
     this.quizFeedbackMessage = correct ?
       `回答正确：${question.explanation} “${question.knowledgePoint}”掌握度更新为${updatedMastery?.score ?? 0}%。` :
-      `还差一点：${question.explanation} “${question.knowledgePoint}”掌握度为${updatedMastery?.score ?? 0}%，Agent 将优先安排巩固。`;
+      `还差一点：${question.explanation} “${question.knowledgePoint}”掌握度为${updatedMastery?.score ?? 0}%，已记录为待巩固。`;
     this.persistSilently();
     const resultText: string = correct ? '回答正确' : '回答错误';
     const adjustmentRequest: string = `我刚完成“${task.title}”，即时小测${resultText}，知识点是“${question.knowledgePoint}”。请结合今天剩余时间、未完成任务和这次测验反馈，调整接下来要做的事。`;
@@ -1849,6 +2049,9 @@ export struct Index {
         onConfirmSchedule: () => {
           this.confirmScheduleImport();
         },
+        onScheduleDraftItemsChange: (items: ScheduleItem[]) => {
+          this.updateScheduleDraftItems(items);
+        },
         onSaveProfile: () => {
           this.saveProfile();
         }
@@ -1859,7 +2062,10 @@ export struct Index {
         if (this.currentTab === 0) {
           HomePageView({
             courseHint: this.todayCourseHint(),
-            onOpenSchedule: () => { this.currentTab = 10; },
+            onOpenSchedule: () => {
+              this.floatingAgentHintVisible = false;
+              this.currentTab = 10;
+            },
             onRetrySave: () => {
               this.persistState().then(() => { this.actionMessage = '已保存'; }).catch(() => {
                 this.actionMessage = '更改仍未保存，请检查存储空间后重试';
@@ -1905,12 +2111,25 @@ export struct Index {
             activeGoalTitle: this.profileExamDateConfirmed ? this.activeGoal()?.goal.title ?? '' : '',
             activeGoalReason: this.profileExamDateConfirmed ? this.activeGoal()?.reason ?? '' : '',
             decision: this.agentDecision(),
-            onPrimaryAction: () => { this.runDailyAction(); },
-            onAdjustToday: (taskIndex: number, title: string, subject: string, minutes: number) => {
-              this.adjustTodayTask(taskIndex, title, subject, minutes);
+            onPrimaryAction: () => {
+              this.floatingAgentHintVisible = false;
+              this.runDailyAction();
             },
-            onManageToday: () => { this.currentTab = 1; },
+            todayStudyOverride: this.todayStudyOverride.date === this.beijingDayKey() ?
+              this.todayStudyOverride : { date: this.beijingDayKey() },
+            todayDate: this.beijingDayKey(),
+            onAdjustToday: (override: TodayStudyOverride, title: string, subject: string, minutes: number) => {
+              this.adjustTodayTask(override, title, subject, minutes);
+            },
+            onDeleteTask: async (taskId: string): Promise<string> => {
+              return this.deleteTodayTask(taskId);
+            },
+            onManageToday: () => {
+              this.floatingAgentHintVisible = false;
+              this.currentTab = 1;
+            },
             onStartFocus: (index: number) => {
+              this.floatingAgentHintVisible = false;
               this.beginFocus(index);
             },
             onToggleRecommendationDetails: () => {
@@ -1918,6 +2137,10 @@ export struct Index {
             },
             onToggleTask: (index: number, completed: boolean) => {
               this.setTaskCompleted(index, completed);
+            },
+            onBusinessOverlayChange: (visible: boolean) => {
+              this.businessOverlayOpen = visible;
+              if (visible) { this.floatingAgentHintVisible = false; }
             }
           })
         } else if (this.currentTab === 1 || this.currentTab === 10) {
@@ -1939,13 +2162,19 @@ export struct Index {
             newGoalTitle: this.newGoalTitle,
             newGoalSubject: this.newGoalSubject,
             newGoalDeadline: this.newGoalDeadline,
+            newGoalEstimatedMinutes: this.newGoalEstimatedMinutes,
             onGoalFieldChange: (field: string, value: string) => {
               if (field === 'title') { this.newGoalTitle = value; }
               else if (field === 'subject') { this.newGoalSubject = value; }
+              else if (field === 'minutes') { this.newGoalEstimatedMinutes = value; }
               else { this.newGoalDeadline = value; }
             },
             onAddGoal: () => { this.addAcademicGoal(); },
             onToggleGoal: (id: string) => { this.toggleAcademicGoal(id); },
+            onUpdateGoal: async (id: string, title: string, subject: string,
+              deadline: string, estimatedMinutes: number): Promise<boolean> => {
+              return await this.updateAcademicGoal(id, title, subject, deadline, estimatedMinutes);
+            },
             onOpenLearning: () => {
               this.openFloatingPlanning('请结合我的目标和今日待办，帮我安排下一步。');
             },
@@ -1960,6 +2189,12 @@ export struct Index {
             },
             onConfirmSchedule: () => {
               this.confirmScheduleImport();
+            },
+            onScheduleDraftItemsChange: (items: ScheduleItem[]) => {
+              this.updateScheduleDraftItems(items);
+            },
+            onSaveSchedule: async (items: ScheduleItem[]): Promise<boolean> => {
+              return await this.saveScheduleEdits(items);
             },
             onNewTaskTitleChange: (value: string) => {
               this.newTaskTitle = value;
@@ -1979,8 +2214,10 @@ export struct Index {
             resultKind: TaskOutcomeService.kind(this.currentTask()),
             resultNote: this.resultNote,
             resultChecked: this.resultChecked,
+            resultExperience: this.resultExperience,
             onResultNote: (value: string) => { this.resultNote = value; },
             onResultChecked: (value: boolean) => { this.resultChecked = value; },
+            onResultExperience: (value: string) => { this.resultExperience = value; },
             onSubmitResult: () => { this.submitSelfResult(); },
             onOpenResult: () => { this.openTaskResult(this.currentTaskIndex); },
             onNextAction: () => { this.currentTab = 0; },
@@ -2094,18 +2331,24 @@ export struct Index {
             LearningHubPageView({
               decision: this.agentDecision(),
               now: this.actionClock,
+              todayTimeText: this.todayTimeText(),
+              completedCount: this.completedCount(),
               setupScheduleReady: this.setupScheduleReady,
               scheduleItems: this.scheduleItems,
               scheduleImportStatus: this.scheduleImportStatus,
               scheduleImportMessage: this.scheduleImportMessage,
               scheduleImportSource: this.scheduleImportSource,
               scheduleDraftItems: this.scheduleDraftItems,
+              academicGoals: this.academicGoals,
               planetStage: PlanetGrowthService.calculate(this.focusRecords, this.quizAttempts, this.bankStudyDays).stage,
               onPrimaryAction: () => { this.runDailyAction(); },
               onOpenSchedule: () => { this.currentTab = 10; },
               onScanSchedule: () => { this.openScheduleScanner(); },
               onImportSchedule: () => { this.importScheduleImage(); },
               onConfirmSchedule: () => { this.confirmScheduleImport(); },
+              onScheduleDraftItemsChange: (items: ScheduleItem[]) => {
+                this.updateScheduleDraftItems(items);
+              },
               onOpen: (destination: number) => { this.currentTab = destination; }
             })
           } else if (this.currentTab === 9) {
@@ -2190,7 +2433,13 @@ export struct Index {
           planSource: this.agentPlanSource,
           supportSource: this.floatingSupportSource,
           planetStage: PlanetGrowthService.calculate(this.focusRecords, this.quizAttempts, this.bankStudyDays).stage,
-          onToggle: () => { this.floatingAgentOpen = !this.floatingAgentOpen; },
+          showHint: this.currentTab === 0 && this.floatingAgentHintVisible,
+          interactive: !this.businessOverlayOpen,
+          onHintDismiss: () => { this.floatingAgentHintVisible = false; },
+          onToggle: () => {
+            this.floatingAgentHintVisible = false;
+            this.floatingAgentOpen = !this.floatingAgentOpen;
+          },
           onClose: () => { this.floatingAgentOpen = false; },
           onModeChange: (mode: string) => {
             this.floatingAgentMode = mode;

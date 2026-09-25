@@ -2,6 +2,7 @@ import { PageHeader } from '../components/PageHeader';
 import { SectionSwitcher } from '../components/SectionSwitcher';
 import { AgentGeneratedTask } from '../models/AgentModels';
 import { BankLearningEvidence } from '../models/QuestionBankModels';
+import { formatSubjectName } from '../utils/SubjectDisplayName';
 
 @Component
 export struct LearningPageView {
@@ -68,7 +69,7 @@ export struct LearningPageView {
   build() {
     Scroll() {
       Column({ space: 16 }) {
-        Text('‹ 返回目标与计划').fontSize(14).fontColor('#6865D9').width('100%').onClick(() => { this.onOpenPlan(); })
+        Text('‹ 返回学习目标').fontSize(14).fontColor('#6865D9').width('100%').onClick(() => { this.onOpenPlan(); })
         PageHeader({ icon: '', title: '和 Agent 聊聊', subtitle: '说说薄弱点，确认后开始补学' })
         Column({ space: 13 }) {
           Row() {
@@ -85,7 +86,7 @@ export struct LearningPageView {
             .width('100%').fontSize(12).fontColor('#9397A9')
           }
           Column({ space: 7 }) {
-            Text(`今天剩余可规划：${this.availableMinutesToday}分钟`)
+            Text(`每日目标参考剩余：${this.availableMinutesToday}分钟`)
               .width('100%').fontSize(11).fontColor('#218764')
           }
           .width('100%').padding(11).backgroundColor('#F3F2FF').borderRadius(13)
@@ -125,11 +126,11 @@ export struct LearningPageView {
               ForEach(this.agentPreviewTasks, (task: AgentGeneratedTask, index: number) => {
                 Column({ space: 5 }) {
                   Row() {
-                    Text(`${index + 1}. ${task.title}`).layoutWeight(1).fontSize(13)
+                    Text(`${index + 1}. ${formatSubjectName(task.title)}`).layoutWeight(1).fontSize(13)
                       .fontWeight(FontWeight.Medium)
                     Text(`${task.minutes}分钟`).fontSize(12).fontColor('#5B5FEF')
                   }.width('100%')
-                  Text(task.subject).width('100%').fontSize(11).fontColor('#9397A9')
+                  Text(formatSubjectName(task.subject)).width('100%').fontSize(11).fontColor('#9397A9')
                   if (this.showPlanReasons) {
                     Text(task.reason).width('100%').fontSize(11).fontColor('#9397A9')
                   }
@@ -144,7 +145,7 @@ export struct LearningPageView {
                   .width('100%').fontSize(11).fontColor('#73788C')
               }
               Row({ space: 10 }) {
-                Button(this.agentCommitBusy ? '正在保存…' : this.bankPlanMode ? '确认追加补学任务' : this.agentFeedbackMode ? '接受调整' : '接受并同步')
+                Button(this.agentCommitBusy ? '正在保存…' : this.bankPlanMode ? '确认追加补学任务' : '把第一项设为今天优先')
                   .layoutWeight(1).height(40).backgroundColor('#5B5FEF').borderRadius(13)
                   .enabled(!this.agentCommitBusy)
                   .onClick(() => {

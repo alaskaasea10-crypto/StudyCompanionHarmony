@@ -15,6 +15,7 @@ PACKAGE_FILES = {
     BACKEND_DIR / "functiongraph" / "index.py": "index.py",
     BACKEND_DIR / "api_router.py": "api_router.py",
     BACKEND_DIR / "agent_service.py": "agent_service.py",
+    BACKEND_DIR / "agent_tools.py": "agent_tools.py",
     BACKEND_DIR / "schedule_ocr.py": "schedule_ocr.py",
 }
 

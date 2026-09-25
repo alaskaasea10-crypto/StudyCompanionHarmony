@@ -13,7 +13,7 @@ const http = { createHttp: () => ({
   destroy: () => {}
 }), RequestMethod: {POST:'POST'}, HttpDataType: {STRING:'STRING'} };
 const box = {exports:{}, console, require: name => name === '@kit.NetworkKit' ? {http} :
-  name.includes('BackendConfig') ? {BackendConfig:{origin:()=> 'http://127.0.0.1:8000'}} : {}};
+  name.includes('BackendConfig') ? {BackendConfig:{origins:()=> ['https://example.invalid']}} : {}};
 vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,
   module:ts.ModuleKind.CommonJS}}).outputText,box);
 const client=box.exports.EmotionalSupportClient;
@@ -26,7 +26,7 @@ const client=box.exports.EmotionalSupportClient;
   const floating=fs.readFileSync(path.join(root,'entry/src/main/ets/components/FloatingAgent.ets'),'utf8');
   assert.ok(floating.includes('这里的对话不会进入学习画像'));
   assert.ok(floating.includes('PanGesture'));
-  assert.ok(floating.includes('接受并加入今日待办'));
+  assert.ok(floating.includes('把第一项设为今天优先'));
   assert.ok(floating.includes('.hitTestBehavior(HitTestMode.Default)'));
   assert.ok(!floating.includes('.hitTestBehavior(this.open ? HitTestMode.Block'));
   const index=fs.readFileSync(path.join(root,'entry/src/main/ets/pages/Index.ets'),'utf8');
@@ -42,7 +42,7 @@ const client=box.exports.EmotionalSupportClient;
     assert.ok(source.includes('StudyPlanet'),`${file} should carry the Planet brand mark`);
   }
   const appIcon=fs.readFileSync(path.join(root,'AppScope/resources/base/media/layered_image.json'),'utf8');
-  assert.ok(appIcon.includes('$media:study_planet'));
+  assert.ok(appIcon.includes('$media:launcher_planet'));
   assert.ok(appIcon.includes('$media:planet_icon_background'));
   console.log('PASS floating planet: private support, draggable global dialog, crisis local fallback, explicit plan acceptance');
   console.log('PASS Planet identity: launcher, loading, setup, home, learning, growth and widget');

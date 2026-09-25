@@ -27,7 +27,15 @@
 
 团队交付压缩包不包含任何人的证书、签名口令、API Key 或本地 SDK 路径；不要直接打包开发电脑上的整个工作目录发送。
 
-## 启动本地 Agent 后端
+## Agent 架构与可选本地后端
+
+正式版本默认访问 `https://api.badminton2026.site`。学习状态仍以 App 本地数据为准：
+
+`HarmonyOS App → 本地 AgentDecisionService → LearningPlanningOrchestrator → HTTPS 云端 Agent → openPangu Native Tool Loop → 服务端校验 → 客户端 PlanValidator`
+
+云端只对本次请求中由客户端提交的真实课表、目标、任务和专注记录执行受控只读查询，不是用户任务数据库。云端不可用时，App 会使用本地可信调度继续工作。主动提醒也只在系统实际允许的生命周期内运行，不代表 App 被彻底杀死后仍能全天候推理。
+
+仅在开发调试云端不可用的版本时，才需要启动本地后端：
 
 ```bash
 cd backend
@@ -36,7 +44,7 @@ cp .env.example .env
 python3 app.py
 ```
 
-模拟器通过 `10.0.2.2:8000` 连接开发机后端；真机需要修改开发机局域网 IP。完整说明见 [backend/README.md](backend/README.md)。
+当 `BackendConfig` 中的云端地址被开发者主动留空时，模拟器可通过 `10.0.2.2:8000` 连接开发机后端。生产默认不依赖 Mac 运行 Python。完整说明见 [backend/README.md](backend/README.md)。
 
 ## 验证
 

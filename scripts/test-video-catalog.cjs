@@ -58,7 +58,9 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root,'entry/src/
 const harnessSource = `class TaskHarness {
   tasks = []; shouldFail = false; saves = 0;
   focusElapsedSeconds = 0; focusMinutes = 15; isRunning = false;
-  focusSessionCredited = false; currentTaskIndex = 0; quizPending = false;
+  focusSegmentStartedAt = 0; remainingSeconds = 900; todayMinutes = 0; studyDayKey = '2026-09-25';
+  focusRecords = []; focusSessionCredited = false; currentTaskIndex = 0; quizPending = false; currentTab = 0;
+  resultNote = ''; resultChecked = false; resultExperience = '';
   async persistState() { if(this.shouldFail) throw Error('storage'); this.saves++; }
   persistSilently() {} clearTimerInterval() {}
   currentTask() { return this.tasks[0]; }
@@ -69,6 +71,8 @@ const harnessSource = `class TaskHarness {
 }
 exports.TaskHarness = TaskHarness;`;
 const harness = { exports: {}, VideoCatalog: catalog, TaskOutcomeService: resultBox.exports.TaskOutcomeService,
+  StudyLiveViewService: { stop: () => {} },
+  StudyDataCenter: { createFocusRecord: () => ({ id: 'focus-test' }) },
   QuizService: { questionFor: () => ({ id: 'test-quiz' }) } };
 vm.runInNewContext(ts.transpileModule(harnessSource, {
   compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS }
@@ -94,6 +98,7 @@ vm.runInNewContext(ts.transpileModule(harnessSource, {
   const ordinary = new harness.exports.TaskHarness();
   ordinary.tasks = [{ id: 'normal', title: '矩阵乘法', subject: '线性代数', source: 'manual', completed: false }];
   ordinary.finishFocus();
-  assert.equal(ordinary.quizPending, true, 'ordinary study quizzes must still work');
-  console.log('PASS: video task creation, duplicate prevention, save failure rollback and quiz isolation');
+  assert.equal(ordinary.quizPending, false, 'the frozen result flow uses self-report instead of an automatic quiz');
+  assert.equal(ordinary.currentTab, 3, 'ordinary study enters the shared focus feedback surface');
+  console.log('PASS: video task creation, duplicate prevention, rollback and shared self-report result flow');
 })().catch(error => { console.error(error); process.exitCode = 1; });

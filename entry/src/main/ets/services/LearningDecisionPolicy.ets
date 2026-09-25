@@ -4,7 +4,8 @@ import {
   AgentProfilePayload,
   QuizFeedbackPayload
 } from '../models/AgentModels';
-import { AcademicGoal, KnowledgeMastery, QuizAttempt, ScheduleItem, StudyMetrics, StudyTask } from '../models/StudyModels';
+import { AcademicGoal, FocusRecord, KnowledgeMastery, QuizAttempt, ScheduleItem, StudyMetrics, StudyTask,
+  TodayStudyOverride } from '../models/StudyModels';
 import { BankLearningEvidence } from '../models/QuestionBankModels';
 import { BankLearningBridge } from './BankLearningBridge';
 import { TodayPlanService } from './TodayPlanService';
@@ -12,6 +13,14 @@ import { BankPlanBudget } from './BankPlanBudget';
 
 export interface LearningContextInput {
   academicGoals?: AcademicGoal[];
+  todayStudyOverride?: TodayStudyOverride;
+  confirmedAvailableMinutes?: number;
+  localDailyPlanTaskIds?: string[];
+  localDailyPlanMinutes?: number[];
+  eligibleTaskIds?: string[];
+  protectedTaskId?: string;
+  protectedStage?: string;
+  recentFocusRecords?: FocusRecord[];
   remainingBudget?: number;
   dailyTargetRemainingMinutes?: number;
   appendMode?: boolean;
@@ -88,9 +97,9 @@ export class LearningDecisionPolicy {
     const bankWeak: BankLearningEvidence | undefined = BankLearningBridge.weakest(
       BankLearningBridge.relevant(LearningDecisionPolicy.buildRequest(input)));
     if (bankWeak !== undefined) { evidence.push(BankLearningBridge.reason(bankWeak)); }
-    if (input.examDays <= 3) {
+    if (input.examDays >= 0 && input.examDays <= 3) {
       evidence.push(`考试仅剩${input.examDays}天，优先处理核心薄弱点`);
-    } else {
+    } else if (input.examDays >= 0 && input.examDays < 999) {
       evidence.push(`距离考试${input.examDays}天，按节奏推进复习`);
     }
     const unfinishedCount: number = input.tasks.filter((task: StudyTask) => !task.completed).length;
@@ -120,13 +129,14 @@ export class LearningDecisionPolicy {
   }
 
   static buildRequest(input: LearningContextInput): AgentPlanRequest {
-    const remainingMinutes: number = input.remainingBudget ?? LearningDecisionPolicy.availableMinutes(
+    const dailyTargetRemaining: number = input.remainingBudget ?? LearningDecisionPolicy.availableMinutes(
       input.profile.dailyMinutes,
       input.metrics.todayFocusMinutes,
       input.energyState
     );
-    const availableMinutes: number = input.bankAppendMode === true ?
-      BankPlanBudget.available(remainingMinutes, input.tasks) : remainingMinutes;
+    const confirmed: number | undefined = input.confirmedAvailableMinutes;
+    const availableMinutes: number | undefined = confirmed !== undefined && Number.isFinite(confirmed) ?
+      Math.min(240, Math.max(0, Math.floor(confirmed))) : undefined;
     const recentQuizFeedback: QuizFeedbackPayload[] = input.quizAttempts.slice(-5)
       .map((attempt: QuizAttempt) => {
         const feedback: QuizFeedbackPayload = {
@@ -147,7 +157,14 @@ export class LearningDecisionPolicy {
       examDays: input.examDays,
       energyState: input.energyState,
       availableMinutesToday: availableMinutes,
-      dailyTargetRemainingMinutes: Math.max(0, Math.floor(input.dailyTargetRemainingMinutes ?? remainingMinutes)),
+      todayStudyOverride: input.todayStudyOverride,
+      localDailyPlanTaskIds: input.localDailyPlanTaskIds,
+      localDailyPlanMinutes: input.localDailyPlanMinutes,
+      eligibleTaskIds: input.eligibleTaskIds,
+      protectedTaskId: input.protectedTaskId,
+      protectedStage: input.protectedStage,
+      recentFocusRecords: input.recentFocusRecords,
+      dailyTargetRemainingMinutes: Math.max(0, Math.floor(input.dailyTargetRemainingMinutes ?? dailyTargetRemaining)),
       appendMode: input.appendMode === true,
       scheduleReady: input.scheduleReady,
       scheduleItems: input.scheduleItems,

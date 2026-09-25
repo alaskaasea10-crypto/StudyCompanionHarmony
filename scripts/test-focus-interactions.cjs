@@ -43,6 +43,12 @@ page.onQuietSignal = (id, signal) => { sent = `${id}:${signal}`; };
 page.sendQuietSignal('加油');
 assert.equal(page.quietSignalMessage, '已悄悄送给小雨');
 assert.equal(sent, 'rain:加油');
+page.squadMembers = [
+  { id: 'self', name: '我', status: '专注中', isSelf: true, isDemo: false },
+  { id: 'rain', name: '小雨', status: '专注中', isSelf: false, isDemo: true }
+];
+assert.equal(page.focusingCount(), 1);
+assert.ok(page.focusingSummary().includes('含体验成员'));
 const Orbit = loadBehavior('components/OrbitField.ets', 'OrbitField', '  build() {');
 const orbit = new Orbit();
 for (const width of [280, 320, 400]) {

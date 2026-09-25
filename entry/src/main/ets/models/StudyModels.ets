@@ -1,3 +1,5 @@
+export type StudyExperience = 'smooth' | 'normal' | 'struggling';
+
 export interface StudyTask {
   id?: string;
   title: string;
@@ -14,12 +16,24 @@ export interface StudyTask {
   submittedAt?: number;
   verifiedAt?: number;
   resultNote?: string;
+  // 用户对本次学习体验的自述，不代表知识掌握度。
+  studyExperience?: StudyExperience;
 }
 
 export interface ActionDeferral {
   key: string;
   until: number;
   kind: string;
+}
+
+// 只影响指定日期的调度；临时任务仍使用原 StudyTask 和稳定 taskId 保存。
+export interface TodayStudyOverride {
+  date: string;
+  availableMinutes?: number;
+  preferredTaskId?: string;
+  preferredSubject?: string;
+  skippedTaskIds?: string[];
+  temporaryTaskIds?: string[];
 }
 
 export interface ScheduleItem {
@@ -132,6 +146,9 @@ export interface StudyStateSnapshot {
   scheduleItems: ScheduleItem[];
   academicGoals?: AcademicGoal[];
   actionDeferrals?: ActionDeferral[];
+  todayStudyOverride?: TodayStudyOverride;
+  // 已永久删除的稳定 taskId；防止长期目标阶段任务在重启时被自动补回。
+  deletedTaskIds?: string[];
   preferredTaskId?: string;
   currentTaskIndex: number;
   focusMinutes: number;

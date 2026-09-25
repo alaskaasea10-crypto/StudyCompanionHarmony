@@ -12,9 +12,9 @@ const {BankLearningBridge:bridge}=load('BankLearningBridge');
 const {PlanValidator:validator}=load('PlanValidator');
 const {PlanCommitService:commit}=load('PlanCommitService');
 const all=bank.topics().flatMap(t=>bank.all(t.id));
-// Verify the shared result route, including plans named by skill alone.
+// The frozen self-report flow no longer jumps from task completion into a question-bank route.
 const indexSource=fs.readFileSync(path.join(root,'entry/src/main/ets/pages/Index.ets'),'utf8');
-assert.ok(indexSource.includes('this.bankTopicId = TaskOutcomeService.topic(task)'));
+assert.ok(!indexSource.includes('this.bankTopicId = TaskOutcomeService.topic(task)'));
 const {TaskOutcomeService:outcome}=load('TaskOutcomeService');
 for(const [title,expected] of [['秩的计算巩固','rank'],['矩阵秩复测','rank'],['可逆条件复习','rank'],
   ['矩阵乘法运算顺序','matrix'],['链式法则复测','derivative']]){

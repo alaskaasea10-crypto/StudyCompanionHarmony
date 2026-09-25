@@ -58,7 +58,7 @@ export class BankLearningBridge {
     const existingReview: AgentGeneratedTask | undefined = plan.tasks.find((task: AgentGeneratedTask) => matches(task) && !isQuiz(task));
     const existingQuiz: AgentGeneratedTask | undefined = plan.tasks.find((task: AgentGeneratedTask) =>
       matches(task) && isQuiz(task));
-    const budget: number = Math.floor(request.context.availableMinutesToday);
+    const budget: number = Math.floor(request.context.availableMinutesToday ?? 0);
     const canRetest: boolean = budget >= 10;
     const reviewMinutes: number = Math.min(15, Math.max(5, existingReview?.minutes ?? 15), canRetest ? budget - 5 : budget);
     const review: AgentGeneratedTask = {

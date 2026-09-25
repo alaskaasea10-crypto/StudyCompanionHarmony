@@ -1,6 +1,7 @@
 import { SquadMember } from '../models/StudyModels';
 import { OrbitField } from '../components/OrbitField';
 import { FocusCosmosBackdrop } from '../components/FocusCosmosBackdrop';
+import { formatSubjectName } from '../utils/SubjectDisplayName';
 
 @Component
 export struct FocusPageView {
@@ -8,8 +9,10 @@ export struct FocusPageView {
   @Prop resultKind: string = 'self';
   @Prop resultNote: string = '';
   @Prop resultChecked: boolean = false;
+  @Prop resultExperience: string = '';
   onResultNote: (value: string) => void = () => {};
   onResultChecked: (value: boolean) => void = () => {};
+  onResultExperience: (value: string) => void = () => {};
   onSubmitResult: () => void = () => {};
   onOpenResult: () => void = () => {};
   onNextAction: () => void = () => {};
@@ -63,7 +66,14 @@ export struct FocusPageView {
   }
 
   private focusingCount(): number {
-    return this.squadMembers.filter((member: SquadMember) => member.status === '专注中').length;
+    return this.squadMembers.filter((member: SquadMember) =>
+      member.status === '专注中' && member.isDemo !== true).length;
+  }
+
+  private focusingSummary(): string {
+    const count: number = this.focusingCount();
+    const hasDemoMember: boolean = this.squadMembers.some((member: SquadMember) => member.isDemo === true);
+    return hasDemoMember ? `${count} 人真实专注 · 含体验成员` : `${count} 人专注中`;
   }
 
   private companions(): SquadMember[] {
@@ -126,7 +136,7 @@ export struct FocusPageView {
             Blank()
             Row({ space: 6 }) {
               Circle().width(4).height(4).fill('#C4B7DA')
-              Text(`${this.focusingCount()} 人专注中`).fontSize(10).fontWeight(FontWeight.Medium).fontColor('#C7BFD6')
+              Text(this.focusingSummary()).fontSize(10).fontWeight(FontWeight.Medium).fontColor('#C7BFD6')
             }.padding({ left: 10, right: 10, top: 7, bottom: 7 })
               .backgroundColor('#1B2338').borderRadius(16).border({ width: 0.5, color: '#35415B' })
           }.width('100%')
@@ -134,24 +144,45 @@ export struct FocusPageView {
         Row({ space: 4 }) {
           Text('专注空间').fontSize(12).fontWeight(FontWeight.Medium).fontColor('#E5DFF0')
             .layoutWeight(1).height(40).textAlign(TextAlign.Center)
-            .backgroundColor('#30324B').borderRadius(12)
-          Text('成长与小队').fontSize(12).fontWeight(FontWeight.Medium).fontColor('#A9A3B8')
+            .backgroundColor('#6759A9').borderRadius(12)
+            .border({ width: 1, color: '#8B7BC6' })
+            .onClick(() => {})
+          Text('成长与小队').fontSize(12).fontWeight(FontWeight.Medium).fontColor('#C5BED4')
             .layoutWeight(1).height(40).textAlign(TextAlign.Center)
+            .backgroundColor('#20283B').borderRadius(12)
+            .border({ width: 1, color: '#3A4660' })
             .onClick(() => { this.onOpenGrowth(); })
-        }.width('100%').padding(4).backgroundColor('#151D30').borderRadius(16)
+        }.width('100%').height(50).padding(5).backgroundColor('#12192A').borderRadius(16)
+          .border({ width: 1, color: '#29344C' })
         if (this.resultPending) {
           Column({ space: 14 }) {
             Text('这次学到了什么？').fontSize(18).fontWeight(FontWeight.Bold).fontColor('#ECE9F3').width('100%')
-              Text(this.currentTaskTitle).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#C1BACF').width('100%')
+              Text(formatSubjectName(this.currentTaskTitle)).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#C1BACF').width('100%')
               TextArea({ text: this.resultNote, placeholder: '一句话记录收获，或仍不明白的地方' })
                 .fontColor('#FFFFFF').placeholderColor('#8E879A')
                 .height(90).maxLength(160).onChange((value: string) => { this.onResultNote(value); })
+              Text('这次学起来怎么样？').fontSize(12).fontWeight(FontWeight.Medium).fontColor('#C1BACF').width('100%')
+              Row({ space: 8 }) {
+                Button('很顺利').layoutWeight(1).height(36).fontSize(11)
+                  .backgroundColor(this.resultExperience === 'smooth' ? '#D6CAE7' : '#32303E')
+                  .fontColor(this.resultExperience === 'smooth' ? '#282332' : '#D6CAE7')
+                  .onClick(() => { this.onResultExperience('smooth'); })
+                Button('一般').layoutWeight(1).height(36).fontSize(11)
+                  .backgroundColor(this.resultExperience === 'normal' ? '#D6CAE7' : '#32303E')
+                  .fontColor(this.resultExperience === 'normal' ? '#282332' : '#D6CAE7')
+                  .onClick(() => { this.onResultExperience('normal'); })
+                Button('有点吃力').layoutWeight(1).height(36).fontSize(11)
+                  .backgroundColor(this.resultExperience === 'struggling' ? '#D6CAE7' : '#32303E')
+                  .fontColor(this.resultExperience === 'struggling' ? '#282332' : '#D6CAE7')
+                  .onClick(() => { this.onResultExperience('struggling'); })
+              }.width('100%')
               Row({ space: 8 }) {
                 Checkbox().select(this.resultChecked).onChange((value: boolean) => { this.onResultChecked(value); })
                 Text('我已按任务要求检查产出').fontSize(13).fontWeight(FontWeight.Medium).fontColor('#D6CAE7')
               }
               Button('记录收获，继续下一步').width('100%').height(46).backgroundColor('#D6CAE7').fontColor('#282332')
-                .enabled(this.resultChecked && this.resultNote.trim().length >= 4).onClick(() => { this.onSubmitResult(); })
+                .enabled(this.resultChecked && this.resultExperience.length > 0 && this.resultNote.trim().length >= 4)
+                .onClick(() => { this.onSubmitResult(); })
               Text('记录为自查完成，不计为知识掌握。').fontSize(11).fontWeight(FontWeight.Medium).fontColor('#ACA5BA')
               Button('还有不明白的，问 Agent').width('100%').height(40)
                 .backgroundColor(Color.Transparent).fontColor('#D6CAE7')
@@ -166,7 +197,7 @@ export struct FocusPageView {
           selfProgress: this.selfTaskProgress
         }).onClick(() => { this.onEnterImmersive(); })
         Column({ space: 8 }) {
-          Text(this.currentTaskTitle).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#C1BACF').maxLines(2)
+          Text(formatSubjectName(this.currentTaskTitle)).fontSize(13).fontWeight(FontWeight.Medium).fontColor('#C1BACF').maxLines(2)
             .textAlign(TextAlign.Center).lineHeight(21).padding({ left: 12, right: 12 })
           Text(this.formatTime(this.remainingSeconds))
             .fontSize(56).fontWeight(FontWeight.Medium).letterSpacing(3).lineHeight(68).fontColor('#EEEAF5')

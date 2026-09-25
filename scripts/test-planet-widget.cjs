@@ -7,10 +7,13 @@ const root = path.resolve(__dirname, '..');
 const cache = new Map();
 
 function load(name) {
+  if (name === 'BuildProfile') return { DEBUG: false };
   if (cache.has(name)) return cache.get(name);
   const box = { exports: {}, console, require: input => input.startsWith('@kit.') ? {} : load(path.basename(input)) };
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root,
-    `entry/src/main/ets/services/${name}.ets`), 'utf8'), {
+  const serviceFile = path.join(root, `entry/src/main/ets/services/${name}.ets`);
+  const filename = fs.existsSync(serviceFile) ? serviceFile :
+    path.join(root, `entry/src/main/ets/utils/${name}.ets`);
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
     compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS }
   }).outputText, box);
   cache.set(name, box.exports);
@@ -35,4 +38,8 @@ assert.equal(widget.fromSnapshot({ ...snapshot, tasks: [{ ...task, outcome: 'foc
   .actionText, '记录学习收获');
 assert.equal(widget.fromSnapshot({ ...snapshot, tasks: [], currentTaskIndex: 0 }).actionText, '和 Agent 聊聊');
 assert.equal(widget.fromSnapshot({ ...snapshot, profileCompleted: false }).target, 'home');
+const internalSubject = widget.fromSnapshot({ ...snapshot,
+  tasks: [{ ...task, title: '复习CollegeEnglish听力', subject: 'CollegeEnglish' }] });
+assert.equal(internalSubject.subject, '大学英语');
+assert.equal(internalSubject.taskTitle, '复习大学英语听力');
 console.log('PASS widget: shares Agent decision, resumes focus, records results, handles empty plans and setup');

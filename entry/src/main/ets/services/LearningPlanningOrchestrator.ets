@@ -5,10 +5,9 @@ import {
   AgentUsage,
   PlanningDecision
 } from '../models/AgentModels';
-import { KnowledgeMastery, StudyTask } from '../models/StudyModels';
+import { StudyTask } from '../models/StudyModels';
 import { AgentClient } from './AgentClient';
 import { PlanValidator } from './PlanValidator';
-import { TodayPlanResult, TodayPlanService } from './TodayPlanService';
 
 export class LearningPlanningOrchestrator {
   private static mergeReasons(policyReasons: string[], modelReasons: string[]): string[] {
@@ -23,22 +22,26 @@ export class LearningPlanningOrchestrator {
   }
 
   private static fallbackPlan(request: AgentPlanRequest, policyReasons: string[]): AgentPlan {
-    const result: TodayPlanResult = TodayPlanService.generate(
-      request.requestText,
-      request.profile.subject,
-      request.context.availableMinutesToday
-    );
-    const tasks: AgentGeneratedTask[] = result.tasks.map((task: StudyTask, index: number) => {
-      const generatedTask: AgentGeneratedTask = {
-        title: task.title,
-        subject: task.subject,
-        type: 'review',
-        minutes: task.minutes,
-        priority: index + 1,
-        reason: result.reason
-      };
-      return generatedTask;
-    });
+    const ids: string[] = request.context.localDailyPlanTaskIds ?? [];
+    if (ids.length === 0) { throw new Error('暂无可安排的真实任务，请先添加学习任务或完成当前反馈'); }
+    const protectedStage: boolean = request.context.protectedStage === 'resume' ||
+      request.context.protectedStage === 'verify';
+    const budget: number | undefined = protectedStage ? undefined : request.context.availableMinutesToday;
+    let remaining: number = budget === undefined ? 45 : budget;
+    const tasks: AgentGeneratedTask[] = [];
+    for (let index: number = 0; index < ids.length && tasks.length < (budget === undefined ? 1 : 4); index++) {
+      const id: string = ids[index];
+      const task: StudyTask | undefined = request.context.unfinishedTasks.find((item: StudyTask) => item.id === id);
+      if (task === undefined) { continue; }
+      const feedback: boolean = request.context.protectedStage === 'verify' && id === request.context.protectedTaskId;
+      const localMinutes: number = request.context.localDailyPlanMinutes?.[index] ?? task.minutes;
+      const minutes: number = feedback ? 0 : Math.min(45, task.minutes, localMinutes, remaining);
+      if (!feedback && minutes < 5) { break; }
+      tasks.push({ taskId: id, title: task.title, subject: task.subject, type: 'review',
+        minutes: minutes, priority: tasks.length + 1, reason: '来自今天仍未完成的真实任务' });
+      remaining -= minutes;
+    }
+    if (tasks.length === 0) { throw new Error('暂无可安排的真实任务，请先添加学习任务'); }
     const usage: AgentUsage = {
       promptTokens: 0,
       completionTokens: 0,
@@ -46,8 +49,8 @@ export class LearningPlanningOrchestrator {
     };
     return {
       summary: `今天先完成${tasks.length}项可执行任务`,
-      detectedSubject: result.subject,
-      recommendationReasons: LearningPlanningOrchestrator.mergeReasons(policyReasons, [result.reason]),
+      detectedSubject: tasks[0].subject,
+      recommendationReasons: LearningPlanningOrchestrator.mergeReasons(policyReasons, []),
       tasks: tasks,
       totalMinutes: tasks.reduce((total: number, task: AgentGeneratedTask) => total + task.minutes, 0),
       source: 'local-fallback',
@@ -57,12 +60,18 @@ export class LearningPlanningOrchestrator {
   }
 
   static async decide(request: AgentPlanRequest, policyReasons: string[]): Promise<PlanningDecision> {
-    if (!Number.isFinite(request.context.availableMinutesToday) || request.context.availableMinutesToday < 5) {
-      throw new Error('本次可规划时长不足 5 分钟，请告诉星球你能投入多久');
+    if (request.context.protectedStage === 'resume' || request.context.protectedStage === 'verify') {
+      const protectedPlan: AgentPlan = PlanValidator.validateExisting(
+        LearningPlanningOrchestrator.fallbackPlan(request, policyReasons), request);
+      return { plan: protectedPlan, notice: '当前专注或反馈优先保留，完成后再更新学习节奏' };
+    }
+    const available: number | undefined = request.context.availableMinutesToday;
+    if (available !== undefined && (!Number.isFinite(available) || available < 5)) {
+      throw new Error('今天确认的可学习时间不足 5 分钟');
     }
     try {
       const modelPlan: AgentPlan = await AgentClient.generateTodayPlan(request);
-      const normalizedPlan: AgentPlan = PlanValidator.validate({
+      const normalizedPlan: AgentPlan = PlanValidator.validateExisting({
         summary: modelPlan.summary,
         detectedSubject: modelPlan.detectedSubject,
         recommendationReasons: LearningPlanningOrchestrator.mergeReasons(
@@ -73,8 +82,11 @@ export class LearningPlanningOrchestrator {
         totalMinutes: modelPlan.totalMinutes,
         source: 'openpangu',
         model: modelPlan.model,
-        usage: modelPlan.usage
-      }, request.context.availableMinutesToday);
+        usage: modelPlan.usage,
+        agentMode: modelPlan.agentMode,
+        toolCalls: modelPlan.toolCalls,
+        rounds: modelPlan.rounds
+      }, request);
       return {
         plan: normalizedPlan,
         notice: ''
@@ -82,13 +94,11 @@ export class LearningPlanningOrchestrator {
     } catch (error) {
       const message: string = error instanceof Error && error.message.length > 0 ?
         error.message : 'Agent 服务暂不可用';
-      const fallback: AgentPlan = PlanValidator.validate(
-        LearningPlanningOrchestrator.fallbackPlan(request, policyReasons),
-        request.context.availableMinutesToday
-      );
+      const fallback: AgentPlan = PlanValidator.validateExisting(
+        LearningPlanningOrchestrator.fallbackPlan(request, policyReasons), request);
       return {
         plan: fallback,
-        notice: `${message}，已由同一决策链生成离线方案供你确认`
+        notice: `${message}，已改用真实任务的本地安排`
       };
     }
   }

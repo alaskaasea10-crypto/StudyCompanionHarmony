@@ -2,6 +2,7 @@ import { ScheduleImportCard } from '../components/ScheduleImportCard';
 import { UserAvatar } from '../components/UserAvatar';
 import { StudyPlanet } from '../components/StudyPlanet';
 import { ScheduleItem } from '../models/StudyModels';
+import { formatSubjectName } from '../utils/SubjectDisplayName';
 
 @Component
 export struct ProfileSetupPageView {
@@ -28,6 +29,7 @@ export struct ProfileSetupPageView {
   onScanSchedule: () => void = () => {};
   onImportSchedule: () => void = () => {};
   onConfirmSchedule: () => void = () => {};
+  onScheduleDraftItemsChange: (items: ScheduleItem[]) => void = () => {};
   onSaveProfile: () => void = () => {};
   onSelectAvatar: () => void = () => {};
 
@@ -150,7 +152,8 @@ export struct ProfileSetupPageView {
             },
             onUseDemo: () => {
               this.onUseDemoSchedule();
-            }
+            },
+            onDraftItemsChange: (items: ScheduleItem[]) => { this.onScheduleDraftItemsChange(items); }
           })
         }
         .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
@@ -162,7 +165,7 @@ export struct ProfileSetupPageView {
             this.ChoiceChip('goal', '考研准备', '考研准备')
             this.ChoiceChip('goal', '能力提升', '能力提升')
           }.width('100%')
-          TextInput({ placeholder: '当前最重要的科目', text: this.profileSubject })
+          TextInput({ placeholder: '当前最重要的科目', text: formatSubjectName(this.profileSubject) })
             .width('100%').height(48).backgroundColor('#F6F7FB').borderRadius(14)
             .onChange((value: string) => {
               this.onTextChange('subject', value);

@@ -2,6 +2,6 @@
   "layered-image":
   {
     "background" : "$media:planet_icon_background",
-    "foreground" : "$media:study_planet"
+    "foreground" : "$media:launcher_planet"
   }
 }

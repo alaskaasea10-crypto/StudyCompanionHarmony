@@ -52,7 +52,9 @@ for(const minutes of [5,9,10,20,30]){
 }
 const input={requestText:'矩阵补学',profile:{subject:'线性代数',dailyMinutes:60},energyState:'一般',tasks:existing,
   metrics:{todayFocusMinutes:30},quizAttempts:[],knowledgeMastery:[],bankAppendMode:true};
-assert.equal(policy.buildRequest(input).context.availableMinutesToday,20);
-input.bankAppendMode=false;
-assert.equal(policy.buildRequest(input).context.availableMinutesToday,30,'ordinary replacement mode is unchanged');
-console.log('PASS: budget reservation, confirm-time changes, dedup, review reuse and short-budget retest policy');
+assert.equal(policy.buildRequest(input).context.availableMinutesToday,undefined,
+  'legacy bank mode cannot invent confirmed availability');
+input.confirmedAvailableMinutes=20;
+assert.equal(policy.buildRequest(input).context.availableMinutesToday,20,
+  'only user-confirmed availability enters the current Agent request');
+console.log('PASS: legacy bank budget, confirm-time changes, dedup and confirmed-time request guard');

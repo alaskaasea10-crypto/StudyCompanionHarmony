@@ -1,8 +1,10 @@
 import { common, Want, WantAgent, wantAgent } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
-import { StudyWidgetService } from './StudyWidgetService';
 import { notificationManager } from '@kit.NotificationKit';
 import { ScheduleItem, StudyStateSnapshot, StudyTask } from '../models/StudyModels';
+import { DailyAction } from './DailyActionService';
+import { AgentDecisionService } from './AgentDecisionService';
+import { formatSubjectName } from '../utils/SubjectDisplayName';
 
 const BUNDLE_NAME: string = 'com.dongxitonghang.studycompanion';
 const STATE_STORE_NAME: string = 'learner_profile';
@@ -28,6 +30,14 @@ export interface NotificationResult {
 }
 
 export class ActiveReminderPolicy {
+  private static confirmedSchedule(snapshot: StudyStateSnapshot): ScheduleItem[] {
+    if (snapshot.setupScheduleReady !== true || !Array.isArray(snapshot.scheduleItems)) {
+      return [];
+    }
+    return snapshot.scheduleItems.filter((item: ScheduleItem) =>
+      !item.id.startsWith('demo-') && !item.id.startsWith('placeholder-'));
+  }
+
   private static timeMinutes(value: string): number {
     const pieces: string[] = value.split(':');
     if (pieces.length !== 2) {
@@ -61,12 +71,13 @@ export class ActiveReminderPolicy {
   }
 
   private static classCandidate(snapshot: StudyStateSnapshot, now: Date): ActiveReminderCandidate | undefined {
-    if (snapshot.notificationClassEnabled !== true || !Array.isArray(snapshot.scheduleItems)) {
+    if (snapshot.notificationClassEnabled !== true) {
       return undefined;
     }
     const weekday: number = now.getUTCDay() === 0 ? 7 : now.getUTCDay();
     const nowMinutes: number = now.getUTCHours() * 60 + now.getUTCMinutes();
-    const todayItems: ScheduleItem[] = snapshot.scheduleItems.filter((item: ScheduleItem) => item.weekday === weekday);
+    const todayItems: ScheduleItem[] = ActiveReminderPolicy.confirmedSchedule(snapshot)
+      .filter((item: ScheduleItem) => item.weekday === weekday);
     for (let index: number = 0; index < todayItems.length; index++) {
       const item: ScheduleItem = todayItems[index];
       const startMinutes: number = ActiveReminderPolicy.timeMinutes(item.startTime);
@@ -74,7 +85,7 @@ export class ActiveReminderPolicy {
       if (minutesUntil >= 0 && minutesUntil <= 30) {
         return {
           kind: 'class',
-          title: `${item.course}还有${minutesUntil}分钟开始`,
+          title: `${formatSubjectName(item.course)}还有${minutesUntil}分钟开始`,
           text: item.location.length > 0 ? `上课地点：${item.location}，记得提前出发。` : '记得带好资料，提前进入学习状态。',
           target: 'home',
           taskId: '',
@@ -86,12 +97,13 @@ export class ActiveReminderPolicy {
   }
 
   private static reviewCandidate(snapshot: StudyStateSnapshot, now: Date): ActiveReminderCandidate | undefined {
-    if (snapshot.notificationReviewEnabled !== true || !Array.isArray(snapshot.scheduleItems)) {
+    if (snapshot.notificationReviewEnabled !== true) {
       return undefined;
     }
     const weekday: number = now.getUTCDay() === 0 ? 7 : now.getUTCDay();
     const nowMinutes: number = now.getUTCHours() * 60 + now.getUTCMinutes();
-    const todayItems: ScheduleItem[] = snapshot.scheduleItems.filter((item: ScheduleItem) => item.weekday === weekday);
+    const todayItems: ScheduleItem[] = ActiveReminderPolicy.confirmedSchedule(snapshot)
+      .filter((item: ScheduleItem) => item.weekday === weekday);
     for (let index: number = 0; index < todayItems.length; index++) {
       const item: ScheduleItem = todayItems[index];
       const endMinutes: number = ActiveReminderPolicy.timeMinutes(item.endTime);
@@ -99,7 +111,7 @@ export class ActiveReminderPolicy {
       if (elapsed >= 10 && elapsed <= 120) {
         return {
           kind: 'review',
-          title: `趁热回顾${item.course}`,
+          title: `趁热回顾${formatSubjectName(item.course)}`,
           text: '课堂结束不久，建议用20分钟整理笔记和关键问题。',
           target: 'home',
           taskId: '',
@@ -114,17 +126,27 @@ export class ActiveReminderPolicy {
     if (snapshot.notificationTaskEnabled !== true || !Array.isArray(snapshot.tasks)) {
       return undefined;
     }
-    const task: StudyTask | undefined = snapshot.tasks.find((item: StudyTask) => !item.completed);
+    const action: DailyAction = AgentDecisionService.decide(snapshot).recommendedAction;
+    if (action.taskId === undefined || action.taskId.length === 0 ||
+      (action.stage !== 'execute' && action.stage !== 'resume' && action.stage !== 'verify')) {
+      return undefined;
+    }
+    const task: StudyTask | undefined = snapshot.tasks.find((item: StudyTask) =>
+      item.id === action.taskId && !item.completed);
     if (task === undefined) {
       return undefined;
     }
+    const taskTitle: string = formatSubjectName(task.title);
+    const text: string = action.stage === 'verify' ? `「${taskTitle}」还差一次学习收获记录。` :
+      action.stage === 'resume' ? `「${taskTitle}」还没结束，可以从刚才停下的地方继续。` :
+        `现在可以继续「${taskTitle}」，建议${action.minutes}分钟。`;
     return {
       kind: 'task',
-      title: `下一步：${task.title}`,
-      text: `Agent已结合你的画像整理好${task.minutes}分钟任务，点击直接进入专注空间。`,
-      target: 'focus',
+      title: '小星球想到一件现在适合做的事',
+      text: text,
+      target: 'next',
       taskId: task.id ?? '',
-      fingerprint: `task-${task.id ?? task.title}-${task.completed === true ? 'done' : 'todo'}`
+      fingerprint: `action-${task.id ?? task.title}-${action.stage}-${action.minutes}`
     };
   }
 
@@ -136,9 +158,11 @@ export class ActiveReminderPolicy {
     if (!bypassQuietHours && ActiveReminderPolicy.isQuietTime(snapshot, now)) {
       return undefined;
     }
-    return ActiveReminderPolicy.classCandidate(snapshot, now) ??
-      ActiveReminderPolicy.reviewCandidate(snapshot, now) ??
-      ActiveReminderPolicy.taskCandidate(snapshot);
+    // 可执行学习行动始终复用首页同一 recommendedAction；课前/课后提示只在没有
+    // 可执行行动时兜底，避免通知层再维护一套任务优先级。
+    return ActiveReminderPolicy.taskCandidate(snapshot) ??
+      ActiveReminderPolicy.classCandidate(snapshot, now) ??
+      ActiveReminderPolicy.reviewCandidate(snapshot, now);
   }
 }
 
@@ -249,28 +273,13 @@ export class ActiveReminderService {
     if (snapshot === undefined || snapshot.notificationEnabled !== true) {
       return { success: false, message: '主动提醒未开启' };
     }
-    let candidate: ActiveReminderCandidate | undefined = ActiveReminderPolicy.choose(snapshot);
+    const candidate: ActiveReminderCandidate | undefined = ActiveReminderPolicy.choose(snapshot);
     if (snapshot.isRunning || ActiveReminderPolicy.isQuietTime(snapshot)) {
       await ActiveReminderService.cancelActive();
       return { success: false, message: '专注或免打扰期间不发送提醒' };
     }
-    if (candidate === undefined && snapshot.notificationTaskEnabled === true) {
-      candidate = { kind: 'task', title: '', text: '', target: 'next', taskId: '', fingerprint: '' };
-    }
     if (candidate === undefined) {
       return { success: false, message: '当前没有需要提醒的事项' };
-    }
-    {
-      const next = await StudyWidgetService.forSnapshot(context, snapshot);
-      if (next.target !== 'next' || snapshot.isRunning) {
-        await ActiveReminderService.cancelActive();
-        return { success: false, message: '当前没有需要提醒的行动' };
-      }
-      candidate.title = '星球提醒';
-      candidate.text = `${next.taskTitle} · ${next.minutesText}`;
-      candidate.target = 'next';
-      candidate.taskId = '';
-      candidate.fingerprint = `planet-${next.taskTitle}`;
     }
     if (await ActiveReminderService.isDuplicate(context, candidate.fingerprint)) {
       return { success: false, message: '相同提醒已发送，暂不重复打扰' };

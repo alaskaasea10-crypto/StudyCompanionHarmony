@@ -1,4 +1,4 @@
-import { StudyTask } from '../models/StudyModels';
+import { StudyExperience, StudyTask } from '../models/StudyModels';
 import { BankLearningEvidence } from '../models/QuestionBankModels';
 
 export class TaskOutcomeService {
@@ -16,14 +16,17 @@ export class TaskOutcomeService {
     const result: StudyTask = JSON.parse(JSON.stringify(task)) as StudyTask;
     result.completed = false; result.completedAt = 0; result.outcome = 'focused';
     result.focusedAt = now; result.submittedAt = 0; result.verifiedAt = 0; result.resultNote = '';
+    result.studyExperience = undefined;
     return result;
   }
 
-  static submit(task: StudyTask, passed: boolean, note: string, now: number): StudyTask {
+  static submit(task: StudyTask, passed: boolean, note: string, now: number,
+    experience?: StudyExperience): StudyTask {
     const self: boolean = TaskOutcomeService.kind(task) === 'self';
     const result: StudyTask = JSON.parse(JSON.stringify(task)) as StudyTask;
     result.outcome = passed && !self ? 'verified' : 'submitted'; result.submittedAt = now;
     result.verifiedAt = passed && !self ? now : 0; result.resultNote = note;
+    result.studyExperience = experience;
     result.completed = passed; result.completedAt = passed ? now : 0;
     return result;
   }
