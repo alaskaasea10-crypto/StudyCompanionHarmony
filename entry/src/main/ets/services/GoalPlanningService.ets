@@ -3,7 +3,6 @@ import { AcademicGoal, GoalMilestone, StudyTask } from '../models/StudyModels';
 export interface GoalPriority {
   goal: AcademicGoal;
   daysLeft: number;
-  unfinishedTaskCount: number;
   reason: string;
 }
 
@@ -36,35 +35,40 @@ export class GoalPlanningService {
     return titles.map((title: string, index: number): GoalMilestone => {
       const dueTime: number = index === titles.length - 1 ? safeDeadline :
         goal.createdAt + Math.floor(span * (index + 1) / titles.length);
+      // 过期目标或被提前的目标，所有内部阶段日期都必须以目标 deadline 为上限。
+      const guardedDueTime: number = Math.min(safeDeadline, dueTime);
       return { id: `${goal.id}-m${index + 1}`, title: title,
         description: index === titles.length - 1 ? '用可检查的结果确认目标是否达成' : '完成本阶段后自动解锁下一阶段',
-        dueDate: GoalPlanningService.dateKey(dueTime), minutes: baseMinutes, completed: false };
+        dueDate: GoalPlanningService.dateKey(guardedDueTime), minutes: baseMinutes, completed: false };
+    });
+  }
+
+  private static refreshedMilestones(goal: AcademicGoal, existing: GoalMilestone[] | undefined): GoalMilestone[] {
+    const generated: GoalMilestone[] = GoalPlanningService.decompose(goal);
+    const previous: GoalMilestone[] = existing ?? [];
+    return generated.map((item: GoalMilestone, index: number): GoalMilestone => {
+      const old: GoalMilestone | undefined = previous[index];
+      return { id: old?.id ?? item.id, title: item.title, description: item.description,
+        dueDate: item.dueDate, minutes: item.minutes, completed: old?.completed ?? false };
     });
   }
 
   static normalize(goal: AcademicGoal): AcademicGoal {
-    return { id: goal.id, title: goal.title, type: goal.type, subject: goal.subject, deadline: goal.deadline,
-      estimatedMinutes: goal.estimatedMinutes, completed: goal.completed, createdAt: goal.createdAt,
-      milestones: Array.isArray(goal.milestones) && goal.milestones.length > 0 ? goal.milestones :
-        GoalPlanningService.decompose(goal) };
+    const normalized: AcademicGoal = { id: goal.id, title: goal.title, type: goal.type, subject: goal.subject,
+      deadline: goal.deadline, estimatedMinutes: goal.estimatedMinutes, completed: goal.completed,
+      createdAt: goal.createdAt };
+    normalized.milestones = GoalPlanningService.refreshedMilestones(normalized, goal.milestones);
+    return normalized;
   }
 
   // 编辑长期目标时保留 goalId、创建时间、完成状态与已有阶段身份。
   static update(goal: AcademicGoal, title: string, subject: string, deadline: string,
     estimatedMinutes: number): AcademicGoal {
-    return { id: goal.id, title: title.trim(), type: goal.type, subject: subject.trim(),
+    const updated: AcademicGoal = { id: goal.id, title: title.trim(), type: goal.type, subject: subject.trim(),
       deadline: deadline.trim(), estimatedMinutes: Math.min(6000, Math.max(60, estimatedMinutes)),
-      completed: goal.completed, createdAt: goal.createdAt, milestones: goal.milestones };
-  }
-
-  static nextMilestone(goal: AcademicGoal): GoalMilestone | undefined {
-    return (goal.milestones ?? []).find((item: GoalMilestone) => !item.completed);
-  }
-
-  static taskFor(goal: AcademicGoal, milestone: GoalMilestone): StudyTask {
-    return { id: `goal-task-${milestone.id}`, title: milestone.title, subject: goal.subject,
-      minutes: Math.min(45, Math.max(15, milestone.minutes)), completed: false, source: 'goal-milestone',
-      createdAt: Date.now(), completedAt: 0, goalId: goal.id, milestoneId: milestone.id };
+      completed: goal.completed, createdAt: goal.createdAt };
+    updated.milestones = GoalPlanningService.refreshedMilestones(updated, goal.milestones);
+    return updated;
   }
 
   static daysUntil(deadline: string, now: number = Date.now()): number {
@@ -77,20 +81,29 @@ export class GoalPlanningService {
     return Math.ceil((target - today) / 86400000);
   }
 
-  static prioritize(goals: AcademicGoal[], tasks: StudyTask[], now: number = Date.now()): GoalPriority | undefined {
-    const active: AcademicGoal[] = goals.filter((goal: AcademicGoal) => !goal.completed);
+  // 长期目标只作为今天及未来的提醒和规划上下文；过期目标仍保留在持久层。
+  static activeGoals(goals: AcademicGoal[], now: number = Date.now()): AcademicGoal[] {
+    const active: AcademicGoal[] = goals.filter((goal: AcademicGoal) => {
+      const days: number = GoalPlanningService.daysUntil(goal.deadline, now);
+      return days !== 999 && days >= 0;
+    });
+    active.sort((left: AcademicGoal, right: AcademicGoal): number => {
+      const dayDifference: number = GoalPlanningService.daysUntil(left.deadline, now) -
+        GoalPlanningService.daysUntil(right.deadline, now);
+      return dayDifference !== 0 ? dayDifference : left.createdAt - right.createdAt;
+    });
+    return active;
+  }
+
+  static prioritize(goals: AcademicGoal[], _tasks: StudyTask[], now: number = Date.now()): GoalPriority | undefined {
+    const active: AcademicGoal[] = GoalPlanningService.activeGoals(goals, now);
     const ranked: GoalPriority[] = active.map((goal: AcademicGoal): GoalPriority => {
       const daysLeft: number = GoalPlanningService.daysUntil(goal.deadline, now);
-      const unfinished: number = tasks.filter((task: StudyTask) => !task.completed && task.subject === goal.subject).length;
-      const urgency: string = daysLeft < 0 ? `已逾期${Math.abs(daysLeft)}天` : daysLeft === 0 ? '今天截止' : `还有${daysLeft}天`;
-      return { goal: goal, daysLeft: daysLeft, unfinishedTaskCount: unfinished,
-        reason: `${urgency} · ${unfinished}项相关任务未完成` };
+      const urgency: string = daysLeft === 0 ? '今天截止' : `还有${daysLeft}天`;
+      return { goal: goal, daysLeft: daysLeft, reason: urgency };
     });
     ranked.sort((left: GoalPriority, right: GoalPriority) => {
-      const leftDays: number = left.daysLeft < 0 ? -1000 + left.daysLeft : left.daysLeft;
-      const rightDays: number = right.daysLeft < 0 ? -1000 + right.daysLeft : right.daysLeft;
-      if (leftDays !== rightDays) { return leftDays - rightDays; }
-      if (left.unfinishedTaskCount !== right.unfinishedTaskCount) { return right.unfinishedTaskCount - left.unfinishedTaskCount; }
+      if (left.daysLeft !== right.daysLeft) { return left.daysLeft - right.daysLeft; }
       return left.goal.createdAt - right.goal.createdAt;
     });
     return ranked[0];

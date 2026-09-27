@@ -4,6 +4,7 @@ import sensor from '@ohos.sensor';
 import { ImmersiveOrbit } from '../components/ImmersiveOrbit';
 import { FloatingAgent } from '../components/FloatingAgent';
 import { preferences } from '@kit.ArkData';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { BottomNavigation } from '../components/BottomNavigation';
 import { FocusPageView } from './FocusPage';
 import { GrowthPageView } from './GrowthPage';
@@ -36,7 +37,7 @@ import {
   StudyTask,
   TodayStudyOverride
 } from '../models/StudyModels';
-import { AcademicGoal, GoalMilestone } from '../models/StudyModels';
+import { AcademicGoal } from '../models/StudyModels';
 import { ScheduleImportResult } from '../models/ScheduleImportModels';
 import {
   AgentGeneratedTask,
@@ -61,6 +62,7 @@ import { PlanValidator } from '../services/PlanValidator';
 import { RecommendationResult, RecommendationService } from '../services/RecommendationService';
 import { StudyDataCenter } from '../services/StudyDataCenter';
 import { StudyRepository } from '../services/StudyRepository';
+import { ProfileCompletionService } from '../services/ProfileCompletionService';
 import { StudyWidgetService } from '../services/StudyWidgetService';
 import { StudyLiveViewService } from '../services/StudyLiveViewService';
 import { StudyActionRouter, StudyExternalAction } from '../services/StudyActionRouter';
@@ -88,6 +90,7 @@ export struct Index {
   private detached: boolean = false;
   @State profileLoaded: boolean = false;
   @State profileCompleted: boolean = false;
+  @State profileSetupEditing: boolean = false;
   @State profileAvatarUri: string = '';
   @State profileName: string = '小林';
   @State profileGrade: string = '大二';
@@ -127,7 +130,6 @@ export struct Index {
   @State focusSessionCredited: boolean = false;
   @State todayMinutes: number = 0;
   @State studyDayKey: string = '';
-  @State newTaskTitle: string = '';
   @State academicGoals: AcademicGoal[] = [];
   @State newGoalTitle: string = '';
   @State newGoalSubject: string = '';
@@ -168,6 +170,8 @@ export struct Index {
   @State squadMessage: string = '小队成员正在安静共学，送出微光不会打断对方';
   @State squadMembers: SquadMember[] = createDefaultSquadMembers('小林');
   @State squadInviteCode: string = '';
+  @State squadJoined: boolean = false;
+  @State squadName: string = '';
   @State squadChallengeTitle: string = '';
   @State squadChallengeMinutes: number = 25;
   @State squadChallengeJoinedCount: number = 0;
@@ -351,16 +355,9 @@ export struct Index {
     return `${year}-${month}-${day}`;
   }
 
-  private examDays(): number {
-    const examTime: number = new Date(`${this.profileExamDate}T00:00:00+08:00`).getTime();
-    if (Number.isNaN(examTime)) {
-      return 14;
-    }
-    const now: Date = new Date();
-    const todayTime: number = new Date(
-      `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')}T00:00:00+08:00`
-    ).getTime();
-    return Math.max(0, Math.ceil((examTime - todayTime) / 86400000));
+  private examDays(now: number = Date.now()): number {
+    const days: number = GoalPlanningService.daysUntil(this.authoritativeGoalDeadline(now), now);
+    return days === 999 ? 14 : days;
   }
 
   private beijingDayKey(): string {
@@ -389,7 +386,7 @@ export struct Index {
   }
 
   private restoreSnapshot(snapshot: StudyStateSnapshot): void {
-    this.profileCompleted = snapshot.profileCompleted === true;
+    this.profileCompleted = ProfileCompletionService.completed(snapshot);
     this.profileAvatarUri = snapshot.profileAvatarUri ?? '';
     this.profileName = snapshot.profileName?.trim().length > 0 ? snapshot.profileName : '小林';
     this.profileGrade = snapshot.profileGrade?.trim().length > 0 ? snapshot.profileGrade : '大二';
@@ -399,7 +396,7 @@ export struct Index {
     this.profileExamDate = snapshot.profileExamDate?.trim().length > 0 ? snapshot.profileExamDate : this.futureDate(14);
     this.profileExamDateConfirmed = snapshot.profileExamDateConfirmed === true &&
       snapshot.profileExamDate?.trim().length > 0;
-    this.profileDailyMinutes = Math.min(240, Math.max(15, snapshot.profileDailyMinutes ?? 60));
+    this.profileDailyMinutes = Math.min(300, Math.max(15, snapshot.profileDailyMinutes ?? 60));
     this.profilePreferredTime = snapshot.profilePreferredTime?.trim().length > 0 ? snapshot.profilePreferredTime : '晚间';
     this.profileLearningStyle = snapshot.profileLearningStyle?.trim().length > 0 ? snapshot.profileLearningStyle : '练习驱动';
     this.profileSupportStyle = snapshot.profileSupportStyle?.trim().length > 0 ? snapshot.profileSupportStyle : '温和陪伴';
@@ -427,7 +424,6 @@ export struct Index {
     this.academicGoals = restoredGoals.length > 0 ? restoredGoals.map((goal: AcademicGoal) => GoalPlanningService.normalize(goal)) :
       [GoalPlanningService.create(`${this.profileSubject}考试`, this.profileSubject,
         this.profileExamDate, this.profileDailyMinutes * Math.max(1, this.examDays()))];
-    this.ensureGoalMilestoneTask();
     this.currentTaskIndex = this.tasks.length === 0 ? 0 :
       Math.min(Math.max(0, snapshot.currentTaskIndex), this.tasks.length - 1);
     this.focusMinutes = Math.min(240, Math.max(1,
@@ -458,6 +454,12 @@ export struct Index {
     const storedSquadMembers: SquadMember[] = Array.isArray(snapshot.squadMembers) ? snapshot.squadMembers : [];
     this.squadMembers = SquadService.normalizeMembers(storedSquadMembers, this.profileName);
     this.squadInviteCode = snapshot.squadInviteCode ?? '';
+    // 旧版本生成过口令时，视为已经进入过本机小队体验，避免升级后丢失原状态。
+    this.squadJoined = snapshot.squadJoined === true ||
+      (snapshot.squadJoined === undefined && this.squadInviteCode.trim().length > 0);
+    const storedSquadName: string = snapshot.squadName ?? '';
+    this.squadName = storedSquadName.trim().length > 0 ? storedSquadName :
+      (this.squadJoined ? '同航学习小队' : '');
     this.squadChallengeTitle = snapshot.squadChallengeTitle ?? '';
     this.squadChallengeMinutes = Math.min(60, Math.max(5, snapshot.squadChallengeMinutes ?? 25));
     this.squadChallengeJoinedCount = Math.max(0, snapshot.squadChallengeJoinedCount ?? 0);
@@ -472,6 +474,7 @@ export struct Index {
   }
 
   private snapshot(): StudyStateSnapshot {
+    const authoritativeGoal: AcademicGoal | undefined = this.activeGoal(this.actionClock)?.goal;
     return {
       schemaVersion: 9,
       actionDeferrals: this.actionDeferrals,
@@ -485,9 +488,9 @@ export struct Index {
       profileGrade: this.profileGrade,
       profileMajor: this.profileMajor,
       profileGoal: this.profileGoal,
-      profileSubject: this.profileSubject,
-      profileExamDate: this.profileExamDate,
-      profileExamDateConfirmed: this.profileExamDateConfirmed,
+      profileSubject: authoritativeGoal?.subject ?? this.profileSubject,
+      profileExamDate: authoritativeGoal?.deadline ?? this.profileExamDate,
+      profileExamDateConfirmed: authoritativeGoal !== undefined || this.profileExamDateConfirmed,
       profileDailyMinutes: this.profileDailyMinutes,
       profilePreferredTime: this.profilePreferredTime,
       profileLearningStyle: this.profileLearningStyle,
@@ -521,6 +524,8 @@ export struct Index {
       // 它会读取 studyMetrics()，而 studyMetrics() 又依赖 snapshot()，造成无限递归。
       squadMembers: this.squadMembers,
       squadInviteCode: this.squadInviteCode,
+      squadJoined: this.squadJoined,
+      squadName: this.squadName,
       squadChallengeTitle: this.squadChallengeTitle,
       squadChallengeMinutes: this.squadChallengeMinutes,
       squadChallengeJoinedCount: this.squadChallengeJoinedCount,
@@ -568,7 +573,8 @@ export struct Index {
       if (snapshot !== undefined) {
         this.restoreSnapshot(snapshot);
       } else {
-      this.profileCompleted = await store.get('completed', false) as boolean;
+      const hasLegacyCompletionFlag: boolean = await store.has('completed');
+      this.profileCompleted = hasLegacyCompletionFlag ? await store.get('completed', false) as boolean : false;
       this.profileName = await store.get('name', '小林') as string;
       this.profileGrade = await store.get('grade', '大二') as string;
       this.profileMajor = await store.get('major', '计算机科学与技术') as string;
@@ -582,6 +588,14 @@ export struct Index {
       this.profileLearningStyle = await store.get('learningStyle', '练习驱动') as string;
       this.profileSupportStyle = await store.get('supportStyle', '温和陪伴') as string;
       this.setupScheduleReady = await store.get('scheduleReady', false) as boolean;
+        if (!hasLegacyCompletionFlag) {
+          const hasLegacyProfile: boolean = await store.has('name') && await store.has('major') &&
+            await store.has('subject') && await store.has('examDate') && await store.has('dailyMinutes');
+          this.profileCompleted = hasLegacyProfile && this.profileName.trim().length > 0 &&
+            this.profileMajor.trim().length > 0 && this.profileSubject.trim().length > 0 &&
+            this.profileExamDate.trim().length > 0 && Number.isFinite(this.profileDailyMinutes) &&
+            this.profileDailyMinutes > 0;
+        }
         if (this.profileCompleted) {
           this.applyProfileToTasks();
         }
@@ -632,8 +646,26 @@ export struct Index {
     this.quizFeedbackMessage = '';
     this.knowledgeMastery = [];
     this.academicGoals = [GoalPlanningService.create(`${this.profileSubject}考试`, this.profileSubject,
-      this.profileExamDate, this.profileDailyMinutes * Math.max(1, this.examDays()))];
-    this.ensureGoalMilestoneTask();
+      this.profileExamDate, this.profileDailyMinutes * Math.max(1, this.examDays()), this.profileGoal)];
+  }
+
+  private syncProfileToAcademicGoal(): void {
+    const priority: GoalPriority | undefined = this.activeGoal();
+    if (priority === undefined) {
+      const created: AcademicGoal = GoalPlanningService.create(`${this.profileSubject}考试`, this.profileSubject,
+        this.profileExamDate, this.profileDailyMinutes * Math.max(1, this.examDays()), this.profileGoal);
+      this.academicGoals = this.academicGoals.concat([created]);
+      return;
+    }
+    const current: AcademicGoal = priority.goal;
+    const title: string = current.subject !== this.profileSubject && current.title.includes(current.subject) ?
+      current.title.replace(current.subject, this.profileSubject) : current.title;
+    const updated: AcademicGoal = GoalPlanningService.update(current, title, this.profileSubject,
+      this.profileExamDate, current.estimatedMinutes);
+    this.academicGoals = this.academicGoals.map((goal: AcademicGoal): AcademicGoal => goal.id === current.id ?
+      { id: updated.id, title: updated.title, type: this.profileGoal, subject: updated.subject,
+        deadline: updated.deadline, estimatedMinutes: updated.estimatedMinutes, completed: updated.completed,
+        createdAt: updated.createdAt, milestones: updated.milestones } : goal);
   }
 
   private async loadBankEvidence(): Promise<void> {
@@ -710,6 +742,39 @@ export struct Index {
     this.persistSilently();
   }
 
+  private joinLocalSquad(code: string): void {
+    const normalized: string = code.trim().toUpperCase();
+    if (!/^[A-Z0-9-]{4,20}$/.test(normalized)) { return; }
+    this.squadJoined = true;
+    this.squadName = '同航学习小队';
+    this.squadInviteCode = normalized;
+    this.squadMembers = SquadService.normalizeMembers(this.squadMembers, this.profileName);
+    this.squadMessage = '已加入本机小队体验；成员与状态不会上传或实时同步';
+    this.persistSilently();
+  }
+
+  private leaveLocalSquad(): void {
+    this.squadJoined = false;
+    this.squadName = '';
+    this.squadInviteCode = '';
+    this.squadChallengeTitle = '';
+    this.squadChallengeJoinedCount = 0;
+    this.squadChallengeActive = false;
+    this.squadMessage = '可以输入同学分享的小队口令，体验一起学习的产品流程';
+    this.persistSilently();
+  }
+
+  private async copySquadCode(): Promise<void> {
+    if (!this.squadJoined || this.squadInviteCode.length === 0) { return; }
+    try {
+      await pasteboard.getSystemPasteboard().setData(
+        pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.squadInviteCode));
+      this.squadMessage = '小队口令已复制';
+    } catch (error) {
+      this.squadMessage = '口令复制失败，请稍后重试';
+    }
+  }
+
   private createSquadChallenge(): void {
     this.squadChallengeTitle = `共同专注${this.focusMinutes}分钟`;
     this.squadChallengeMinutes = this.focusMinutes;
@@ -729,8 +794,9 @@ export struct Index {
     this.profileSubject = this.profileSubject.trim();
     this.profileExamDate = this.profileExamDate.trim();
     this.squadMembers = SquadService.normalizeMembers(this.squadMembers, this.profileName);
-    this.applyProfileToTasks();
+    this.syncProfileToAcademicGoal();
     this.profileCompleted = true;
+    this.profileSetupEditing = false;
     this.currentTab = 0;
     await this.persistState();
   }
@@ -738,9 +804,9 @@ export struct Index {
   private async resetProfile(): Promise<void> {
     this.agentRequestId += 1;
     this.pauseFocus(false);
-    this.profileCompleted = false;
+    // 编辑已有画像不是重新 onboarding；即使中途退出，完成标记也必须保留。
+    this.profileSetupEditing = true;
     this.currentTab = 0;
-    await this.persistState();
   }
 
   private hostAbilityContext(): common.UIAbilityContext | undefined {
@@ -859,7 +925,7 @@ export struct Index {
     try {
       const result: ScheduleImportResult = await ScheduleImportClient.recognizeUri(uri);
       this.scheduleDraftItems = result.scheduleItems;
-      this.scheduleImportSource = '华为 Vision 智能扫描';
+      this.scheduleImportSource = '华为 Vision';
       this.scheduleImportMessage = `已识别 ${result.scheduleItems.length} 门课程`;
       this.scheduleImportStatus = 'reviewing';
     } catch (error) {
@@ -938,6 +1004,8 @@ export struct Index {
       this.profileGrade = value;
     } else if (group === 'goal') {
       this.profileGoal = value;
+    } else if (group === 'subject') {
+      this.profileSubject = value;
     } else if (group === 'time') {
       this.profilePreferredTime = value;
     } else if (group === 'style') {
@@ -1096,7 +1164,7 @@ export struct Index {
     if (override.date !== date) { return; }
     const previous: TodayStudyOverride = this.todayStudyOverride.date === date ? this.todayStudyOverride : { date: date };
     const available: number | undefined = override.availableMinutes === undefined ? undefined :
-      Math.min(240, Math.max(0, Math.floor(override.availableMinutes)));
+      LearningActionService.totalBudgetForAdditional(this.snapshot(), override.availableMinutes);
     const skippedIds: string[] = (override.skippedTaskIds ?? []).filter((id: string) =>
       this.tasks.some((task: StudyTask) => task.id === id && !task.completed));
     let preferredId: string = override.preferredTaskId ?? '';
@@ -1124,6 +1192,9 @@ export struct Index {
       this.actionDeferrals = this.actionDeferrals.filter((item: ActionDeferral) => item.key !== `task:${preferredId}`);
     }
     this.actionClock = Date.now();
+    this.agentRequestId++;
+    this.agentLoading = false;
+    this.agentGenerated = false;
     this.actionMessage = '今天的安排已更新；正在进行的专注不会被打断';
     if (typeof StudyDecisionDebug !== 'undefined') {
       const adjustedTask: StudyTask | undefined = this.tasks.find((task: StudyTask) => task.id === preferredId);
@@ -1193,7 +1264,6 @@ export struct Index {
         temporaryTaskIds: this.todayStudyOverride.temporaryTaskIds };
       this.preferredTaskId = '';
     }
-    if (passed) { this.advanceGoalMilestone(updated, true); }
     if (typeof StudyDecisionDebug !== 'undefined') {
       StudyDecisionDebug.event('feedback-submitted', updated.id ?? '', updated.subject, updated.title,
         `completed=${updated.completed}`);
@@ -1206,7 +1276,7 @@ export struct Index {
   }
 
   private submitSelfResult(): void {
-    if (!this.resultChecked || this.resultExperience.length === 0 || this.resultNote.trim().length < 4 ||
+    if (!this.resultChecked || this.resultExperience.length === 0 ||
       TaskOutcomeService.kind(this.currentTask()) !== 'self') { return; }
     this.recordTaskResult(this.currentTaskIndex, true, this.resultNote.trim(), this.resultExperience);
     this.resultNote = ''; this.resultChecked = false; this.resultExperience = '';
@@ -1235,8 +1305,20 @@ export struct Index {
     this.persistSilently();
   }
 
-  private activeGoal(): GoalPriority | undefined {
-    return GoalPlanningService.prioritize(this.academicGoals, this.tasks);
+  private activeGoal(now: number = Date.now()): GoalPriority | undefined {
+    return GoalPlanningService.prioritize(this.academicGoals, this.tasks, now);
+  }
+
+  private authoritativeGoalTitle(now: number = Date.now()): string {
+    return this.activeGoal(now)?.goal.title ?? this.profileGoal;
+  }
+
+  private authoritativeGoalSubject(now: number = Date.now()): string {
+    return this.activeGoal(now)?.goal.subject ?? this.profileSubject;
+  }
+
+  private authoritativeGoalDeadline(now: number = Date.now()): string {
+    return this.activeGoal(now)?.goal.deadline ?? this.profileExamDate;
   }
 
   private addAcademicGoal(): void {
@@ -1249,17 +1331,7 @@ export struct Index {
       !/^\d+$/.test(estimatedText) || estimated < 60 || estimated > 6000) { return; }
     const goal: AcademicGoal = GoalPlanningService.create(title, subject, deadline, estimated, '学习目标');
     this.academicGoals = this.academicGoals.concat([goal]);
-    const first: GoalMilestone | undefined = GoalPlanningService.nextMilestone(goal);
-    if (first !== undefined) { this.tasks = this.tasks.concat([GoalPlanningService.taskFor(goal, first)]); }
     this.newGoalTitle = ''; this.newGoalSubject = ''; this.newGoalDeadline = ''; this.newGoalEstimatedMinutes = '';
-    this.persistSilently();
-  }
-
-  private toggleAcademicGoal(id: string): void {
-    this.academicGoals = this.academicGoals.map((goal: AcademicGoal): AcademicGoal => goal.id === id ?
-      { id: goal.id, title: goal.title, type: goal.type, subject: goal.subject, deadline: goal.deadline,
-        estimatedMinutes: goal.estimatedMinutes, completed: !goal.completed, createdAt: goal.createdAt,
-        milestones: goal.milestones } : goal);
     this.persistSilently();
   }
 
@@ -1284,42 +1356,6 @@ export struct Index {
       this.academicGoals = previous;
       this.actionMessage = '学习目标保存失败，已保留原记录';
       return false;
-    }
-  }
-
-  private ensureGoalMilestoneTask(): void {
-    // 每个真实目标都保留自己的下一阶段，避免只有 priorityGoal 拥有可调度任务。
-    this.academicGoals.filter((goal: AcademicGoal) => !goal.completed).forEach((goal: AcademicGoal) => {
-      const milestone: GoalMilestone | undefined = GoalPlanningService.nextMilestone(goal);
-      const milestoneTask: StudyTask | undefined = milestone === undefined ? undefined :
-        GoalPlanningService.taskFor(goal, milestone);
-      if (milestoneTask !== undefined && !(this.deletedTaskIds ?? []).includes(milestoneTask.id ?? '') &&
-        !this.tasks.some((task: StudyTask) => task.milestoneId === milestoneTask.milestoneId)) {
-        this.tasks = this.tasks.concat([milestoneTask]);
-      }
-    });
-  }
-
-  private advanceGoalMilestone(task: StudyTask, completed: boolean): void {
-    if (task.goalId === undefined || task.milestoneId === undefined) { return; }
-    if (completed && this.tasks.some((item: StudyTask) => item.goalId === task.goalId &&
-      item.milestoneId === task.milestoneId && !item.completed)) { return; }
-    this.academicGoals = this.academicGoals.map((goal: AcademicGoal): AcademicGoal => {
-      if (goal.id !== task.goalId) { return goal; }
-      const milestones: GoalMilestone[] = (goal.milestones ?? []).map((item: GoalMilestone): GoalMilestone =>
-        item.id === task.milestoneId ? { id: item.id, title: item.title, description: item.description,
-          dueDate: item.dueDate, minutes: item.minutes, completed: completed } : item);
-      return { id: goal.id, title: goal.title, type: goal.type, subject: goal.subject, deadline: goal.deadline,
-        estimatedMinutes: goal.estimatedMinutes, completed: milestones.length > 0 && milestones.every((item: GoalMilestone) => item.completed),
-        createdAt: goal.createdAt, milestones: milestones };
-    });
-    if (completed) {
-      const updated: AcademicGoal | undefined = this.academicGoals.find((goal: AcademicGoal) => goal.id === task.goalId);
-      const next: GoalMilestone | undefined = updated === undefined ? undefined : GoalPlanningService.nextMilestone(updated);
-      if (updated !== undefined && next !== undefined &&
-        !this.tasks.some((item: StudyTask) => item.milestoneId === next.id)) {
-        this.tasks = this.tasks.concat([GoalPlanningService.taskFor(updated, next)]);
-      }
     }
   }
 
@@ -1520,7 +1556,6 @@ export struct Index {
 
   private setTaskCompleted(index: number, completed: boolean): void {
     if (completed) { this.openTaskResult(index); return; }
-    const changedTask: StudyTask | undefined = this.tasks[index];
     this.tasks = this.tasks.map((task: StudyTask, taskIndex: number) => {
       if (taskIndex === index) {
         return {
@@ -1538,33 +1573,13 @@ export struct Index {
       }
       return task;
     });
-    if (changedTask !== undefined) { this.advanceGoalMilestone(changedTask, completed); }
-    this.persistSilently();
-  }
-
-  private addTask(): void {
-    const title: string = this.newTaskTitle.trim();
-    if (title.length === 0) {
-      return;
-    }
-    this.tasks = this.tasks.concat([{
-      id: `manual-${Date.now()}`,
-      title: title,
-      subject: '自定义任务',
-      minutes: 25,
-      completed: false,
-      source: 'manual',
-      createdAt: Date.now(),
-      completedAt: 0
-    }]);
-    this.newTaskTitle = '';
     this.persistSilently();
   }
 
   private learningContextInput(text: string, appendMode: boolean = false,
     planningBudget?: number): LearningContextInput {
     const metrics: StudyMetrics = this.studyMetrics();
-    const goals: AcademicGoal[] = this.academicGoals.filter((goal: AcademicGoal) => !goal.completed);
+    const goals: AcademicGoal[] = GoalPlanningService.activeGoals(this.academicGoals, this.actionClock);
     const subjects: string[] = Array.from(new Set(goals.map((goal: AcademicGoal) => goal.subject).concat(
       this.tasks.filter((task: StudyTask) => !task.completed).map((task: StudyTask) => task.subject))));
     const activeOverride: TodayStudyOverride | undefined = this.todayStudyOverride.date === this.beijingDayKey() ?
@@ -1573,9 +1588,14 @@ export struct Index {
       this.scheduleItems.every((item: ScheduleItem) => !item.id.startsWith('demo-'));
     const dailyTargetRemaining: number = LearningActionService.budget(this.snapshot());
     const decision: AgentDecisionResult = AgentDecisionService.decide(this.snapshot(), this.actionClock);
-    const confirmedMinutes: number | undefined = activeOverride?.availableMinutes;
+    const fallbackExamDays: number = this.profileExamDateConfirmed ?
+      GoalPlanningService.daysUntil(this.profileExamDate, this.actionClock) : 999;
+    const fallbackExamDate: string = fallbackExamDays >= 0 && fallbackExamDays !== 999 ? this.profileExamDate : '';
+    // 云端只接收当前真正剩余的预算；持久层 availableMinutes 仍是兼容的当天总预算。
+    const confirmedMinutes: number | undefined = activeOverride?.availableMinutes === undefined ? undefined :
+      dailyTargetRemaining;
     return {
-      academicGoals: this.academicGoals,
+      academicGoals: goals,
       todayStudyOverride: activeOverride,
       confirmedAvailableMinutes: this.bankPlanMode && planningBudget !== undefined ? planningBudget : confirmedMinutes,
       localDailyPlanTaskIds: decision.dailyPlan.map(item => item.taskId),
@@ -1597,7 +1617,7 @@ export struct Index {
         goal: goals.length > 0 ? goals.map((goal: AcademicGoal) => goal.title).join('；') : this.profileGoal,
         subject: subjects.length > 1 ? '多个课程' : subjects[0] ?? this.profileSubject,
         examDate: goals.length === 1 ? goals[0].deadline :
-          this.profileExamDateConfirmed ? this.profileExamDate : '',
+          this.activeGoal()?.goal.deadline ?? fallbackExamDate,
         dailyMinutes: this.profileDailyMinutes,
         preferredTime: this.profilePreferredTime,
         learningStyle: this.profileLearningStyle,
@@ -1605,7 +1625,7 @@ export struct Index {
       },
       date: this.beijingDayKey(),
       examDays: goals.length === 1 ? GoalPlanningService.daysUntil(goals[0].deadline) :
-        this.profileExamDateConfirmed ? this.examDays() : 999,
+        this.activeGoal() !== undefined ? this.examDays() : fallbackExamDays >= 0 ? fallbackExamDays : 999,
       energyState: this.energyState,
       scheduleReady: realSchedule,
       scheduleItems: realSchedule ? this.scheduleItems : [],
@@ -1863,6 +1883,7 @@ export struct Index {
     if (this.orbitImmersive || this.orbitChanging) { this.exitOrbit(); return true; }
     if (this.scheduleScannerOpen) { this.cancelScheduleScanner(); return true; }
     if (this.floatingAgentOpen) { this.floatingAgentOpen = false; return true; }
+    if (this.profileSetupEditing) { this.profileSetupEditing = false; this.currentTab = 5; return true; }
     if ([1, 7, 9, 10].includes(this.currentTab)) { this.currentTab = 8; return true; }
     if (this.currentTab === 6) {
       this.currentTab = this.videoReturnTab;
@@ -2000,7 +2021,7 @@ export struct Index {
       })
     } else if (!this.profileLoaded) {
       LoadingPageView()
-    } else if (!this.profileCompleted) {
+    } else if (!this.profileCompleted || this.profileSetupEditing) {
       ProfileSetupPageView({
         profileAvatarUri: this.profileAvatarUri,
         avatarStatus: this.avatarStatus,
@@ -2024,8 +2045,6 @@ export struct Index {
             this.profileName = value;
           } else if (field === 'major') {
             this.profileMajor = value;
-          } else if (field === 'subject') {
-            this.profileSubject = value;
           } else if (field === 'examDate') {
             this.profileExamDate = value;
             this.profileExamDateConfirmed = value.trim().length > 0;
@@ -2039,9 +2058,6 @@ export struct Index {
         },
         onUseDemoSchedule: () => {
           this.useDemoSchedule();
-        },
-        onScanSchedule: () => {
-          this.openScheduleScanner();
         },
         onImportSchedule: () => {
           this.importScheduleImage();
@@ -2108,8 +2124,8 @@ export struct Index {
             timelineDetail: this.recommendation().timelineDetail,
             showRecommendationDetails: this.showRecommendationDetails,
             actionEnabled: true,
-            activeGoalTitle: this.profileExamDateConfirmed ? this.activeGoal()?.goal.title ?? '' : '',
-            activeGoalReason: this.profileExamDateConfirmed ? this.activeGoal()?.reason ?? '' : '',
+            activeGoalTitle: this.activeGoal()?.goal.title ?? '',
+            activeGoalReason: this.activeGoal()?.reason ?? '',
             decision: this.agentDecision(),
             onPrimaryAction: () => {
               this.floatingAgentHintVisible = false;
@@ -2118,6 +2134,7 @@ export struct Index {
             todayStudyOverride: this.todayStudyOverride.date === this.beijingDayKey() ?
               this.todayStudyOverride : { date: this.beijingDayKey() },
             todayDate: this.beijingDayKey(),
+            todayRemainingMinutes: this.availableMinutesToday(),
             onAdjustToday: (override: TodayStudyOverride, title: string, subject: string, minutes: number) => {
               this.adjustTodayTask(override, title, subject, minutes);
             },
@@ -2153,12 +2170,8 @@ export struct Index {
             scheduleImportMessage: this.scheduleImportMessage,
             scheduleImportSource: this.scheduleImportSource,
             scheduleDraftItems: this.scheduleDraftItems,
-            newTaskTitle: this.newTaskTitle,
-            profileSubject: this.profileSubject,
-            profileExamDate: this.profileExamDate,
-            examDays: this.examDays(),
-            tasks: this.tasks,
             academicGoals: this.academicGoals,
+            now: this.actionClock,
             newGoalTitle: this.newGoalTitle,
             newGoalSubject: this.newGoalSubject,
             newGoalDeadline: this.newGoalDeadline,
@@ -2170,7 +2183,6 @@ export struct Index {
               else { this.newGoalDeadline = value; }
             },
             onAddGoal: () => { this.addAcademicGoal(); },
-            onToggleGoal: (id: string) => { this.toggleAcademicGoal(id); },
             onUpdateGoal: async (id: string, title: string, subject: string,
               deadline: string, estimatedMinutes: number): Promise<boolean> => {
               return await this.updateAcademicGoal(id, title, subject, deadline, estimatedMinutes);
@@ -2180,9 +2192,6 @@ export struct Index {
             },
             onUseDemoSchedule: () => {
               this.useDemoSchedule();
-            },
-            onScanSchedule: () => {
-              this.openScheduleScanner();
             },
             onImportSchedule: () => {
               this.importScheduleImage();
@@ -2196,15 +2205,6 @@ export struct Index {
             onSaveSchedule: async (items: ScheduleItem[]): Promise<boolean> => {
               return await this.saveScheduleEdits(items);
             },
-            onNewTaskTitleChange: (value: string) => {
-              this.newTaskTitle = value;
-            },
-            onAddTask: () => {
-              this.addTask();
-            },
-            onStartTask: (index: number) => {
-              this.beginFocus(index);
-            }
           })
         } else if (this.currentTab === 3) {
           FocusPageView({
@@ -2293,6 +2293,8 @@ export struct Index {
             squadMessage: this.squadMessage,
             squadMembers: this.squadMembersForDisplay(),
             squadInviteCode: this.squadInviteCode,
+            squadJoined: this.squadJoined,
+            squadName: this.squadName,
             squadChallengeTitle: this.squadChallengeTitle,
             // 新挑战跟随当前番茄钟时长；已有挑战继续显示创建时的时长。
             squadChallengeMinutes: this.squadChallengeActive ? this.squadChallengeMinutes : this.focusMinutes,
@@ -2306,6 +2308,18 @@ export struct Index {
             },
             onCreateInvite: () => {
               this.createSquadInvite();
+            },
+            onJoinTeam: (code: string) => {
+              this.joinLocalSquad(code);
+            },
+            onLeaveTeam: () => {
+              this.leaveLocalSquad();
+            },
+            onCopyTeamCode: () => {
+              this.copySquadCode();
+            },
+            onBusinessOverlayChange: (visible: boolean) => {
+              this.businessOverlayOpen = visible;
             },
             onCreateChallenge: () => {
               this.createSquadChallenge();
@@ -2343,7 +2357,6 @@ export struct Index {
               planetStage: PlanetGrowthService.calculate(this.focusRecords, this.quizAttempts, this.bankStudyDays).stage,
               onPrimaryAction: () => { this.runDailyAction(); },
               onOpenSchedule: () => { this.currentTab = 10; },
-              onScanSchedule: () => { this.openScheduleScanner(); },
               onImportSchedule: () => { this.importScheduleImage(); },
               onConfirmSchedule: () => { this.confirmScheduleImport(); },
               onScheduleDraftItemsChange: (items: ScheduleItem[]) => {
@@ -2368,12 +2381,12 @@ export struct Index {
             profileName: this.profileName,
             profileGrade: this.profileGrade,
             profileMajor: this.profileMajor,
-            profileGoal: this.profileGoal,
+            profileGoal: this.authoritativeGoalTitle(),
             profileLearningStyle: this.profileLearningStyle,
             profileDailyMinutes: this.profileDailyMinutes,
             profilePreferredTime: this.profilePreferredTime,
-            profileSubject: this.profileSubject,
-            profileExamDate: this.profileExamDate,
+            profileSubject: this.authoritativeGoalSubject(),
+            profileExamDate: this.authoritativeGoalDeadline(),
             examDays: this.examDays(),
             energyState: this.energyState,
             todayTimeText: this.todayTimeText(),

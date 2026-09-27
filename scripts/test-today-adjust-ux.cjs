@@ -26,15 +26,19 @@ const automatic = new Page();
 automatic.tasks = tasks;
 automatic.todayDate = '2026-09-25';
 automatic.todayStudyOverride = { date: '2026-09-25', availableMinutes: 60 };
+automatic.todayRemainingMinutes = 25;
 const overlayStates = [];
 automatic.onBusinessOverlayChange = visible => { overlayStates.push(visible); };
 automatic.openTodayAdjust();
 assert.equal(automatic.draftPriorityMode, 'auto');
+assert.equal(automatic.draftAvailableMinutes, '25',
+  'the sheet must show the remaining additional time, not the persisted total-day budget');
 assert.deepEqual(overlayStates, [true], 'opening today adjust must suppress the floating hint');
 let saved;
 automatic.onAdjustToday = override => { saved = override; };
 automatic.saveTodayAdjust();
 assert.equal(saved.preferredTaskId, '', 'automatic arrangement must clear preferredTaskId');
+assert.equal(saved.availableMinutes, 25, 'the page passes the user-facing additional minutes to Index');
 assert.equal(automatic.tasks.length, 2, 'automatic arrangement cannot create a task');
 assert.deepEqual(overlayStates, [true, false], 'closing today adjust must restore the floating layer');
 
@@ -48,6 +52,17 @@ assert.equal(manual.draftPriorityMode, 'manual');
 manual.onAdjustToday = override => { saved = override; };
 manual.saveTodayAdjust();
 assert.equal(saved.preferredTaskId, 'english-1', 'manual priority preserves the real taskId');
+
+const invalid = new Page();
+invalid.tasks = tasks;
+invalid.todayDate = '2026-09-25';
+invalid.adjustOpen = true;
+invalid.draftAvailableMinutes = '360';
+let invalidSaves = 0;
+invalid.onAdjustToday = () => { invalidSaves++; };
+invalid.saveTodayAdjust();
+assert.equal(invalidSaves, 0, 'out-of-range custom input cannot be silently persisted');
+assert.equal(invalid.adjustOpen, true, 'an invalid value keeps the sheet open so the visible error can be corrected');
 
 manual.openTodayAdjust();
 assert.equal(manual.draftPriorityMode, 'auto', 'parent state remains the source of truth until saved state returns');
@@ -68,6 +83,11 @@ assert.deepEqual(Array.from(manual.draftSkippedTaskIds), ['english-1']);
 
 assert.ok(fullSource.includes('小星球自动安排'));
 assert.ok(fullSource.includes('我指定一个待办优先'));
+assert.ok(fullSource.includes('接下来还想学多久？'));
+assert.ok(fullSource.includes('这里填写的是从现在开始愿意再投入的时间'));
+assert.ok(fullSource.includes('超过范围不会保存'));
+assert.ok(fullSource.includes('[15, 30, 60]'));
+assert.ok(!fullSource.includes('今天总共可学习分钟数（包含已专注）'));
 assert.ok(!fullSource.includes('不指定，交给小星球安排'));
 assert.ok(fullSource.includes('this.adjustOpen = false;'), 'the existing adjust sheet flow remains in place');
 const indexSource = fs.readFileSync(path.resolve(__dirname, '..', 'entry/src/main/ets/pages/Index.ets'), 'utf8');

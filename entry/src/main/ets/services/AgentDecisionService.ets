@@ -67,11 +67,12 @@ export class AgentDecisionService {
       return undefined;
     }
     const days: number = GoalPlanningService.daysUntil(date, now);
-    return days === 999 ? undefined : days;
+    return days === 999 || days < 0 ? undefined : days;
   }
 
-  private static decisionGoals(snapshot: StudyStateSnapshot, confirmedExam: boolean): AcademicGoal[] {
-    const goals: AcademicGoal[] = snapshot.academicGoals ?? [];
+  private static decisionGoals(snapshot: StudyStateSnapshot, confirmedExam: boolean,
+    now: number): AcademicGoal[] {
+    const goals: AcademicGoal[] = GoalPlanningService.activeGoals(snapshot.academicGoals ?? [], now);
     if (confirmedExam) { return goals; }
     // 旧档案可能自动生成“某科考试”目标；未确认日期不能参与排序。
     return goals.filter((goal: AcademicGoal) => !(goal.title === `${snapshot.profileSubject}考试` &&
@@ -158,7 +159,7 @@ export class AgentDecisionService {
     const examDays: number | undefined = AgentDecisionService.confirmedExamDays(snapshot, now);
     const usableSnapshot: StudyStateSnapshot = JSON.parse(JSON.stringify(snapshot)) as StudyStateSnapshot;
     usableSnapshot.setupScheduleReady = hasSchedule;
-    usableSnapshot.academicGoals = AgentDecisionService.decisionGoals(snapshot, examDays !== undefined);
+    usableSnapshot.academicGoals = AgentDecisionService.decisionGoals(snapshot, examDays !== undefined, now);
     const action: DailyAction = LearningActionService.decide(usableSnapshot, [], now);
     const day: string = AgentDecisionService.dayKey(now);
     const todayMinutes: number = StudyDataCenter.calculateMetrics(snapshot.tasks ?? [], snapshot.focusRecords ?? [],

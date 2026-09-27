@@ -65,17 +65,6 @@ export struct FocusPageView {
     return `${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`;
   }
 
-  private focusingCount(): number {
-    return this.squadMembers.filter((member: SquadMember) =>
-      member.status === '专注中' && member.isDemo !== true).length;
-  }
-
-  private focusingSummary(): string {
-    const count: number = this.focusingCount();
-    const hasDemoMember: boolean = this.squadMembers.some((member: SquadMember) => member.isDemo === true);
-    return hasDemoMember ? `${count} 人真实专注 · 含体验成员` : `${count} 人专注中`;
-  }
-
   private companions(): SquadMember[] {
     return this.squadMembers.filter((member: SquadMember) => !member.isSelf).slice(0, 3);
   }
@@ -88,6 +77,10 @@ export struct FocusPageView {
       return selected;
     }
     return this.companions().find((member: SquadMember) => member.status === '专注中') ?? this.companions()[0];
+  }
+
+  private skipResultNote(): void {
+    this.onResultNote('');
   }
 
   private isQuietTarget(memberId: string): boolean {
@@ -131,15 +124,8 @@ export struct FocusPageView {
       Column({ space: 14 }) {
         Column({ space: 9 }) {
           Text('FOCUS  /  A SHARED UNIVERSE').fontSize(8).fontWeight(FontWeight.Medium).letterSpacing(1.6).fontColor('#8E9AB9')
-          Row() {
-            Text('共学光场').fontSize(27).fontWeight(FontWeight.Bold).letterSpacing(2).fontColor('#ECE9F3')
-            Blank()
-            Row({ space: 6 }) {
-              Circle().width(4).height(4).fill('#C4B7DA')
-              Text(this.focusingSummary()).fontSize(10).fontWeight(FontWeight.Medium).fontColor('#C7BFD6')
-            }.padding({ left: 10, right: 10, top: 7, bottom: 7 })
-              .backgroundColor('#1B2338').borderRadius(16).border({ width: 0.5, color: '#35415B' })
-          }.width('100%')
+          Text('共学光场').width('100%').fontSize(27).fontWeight(FontWeight.Bold)
+            .letterSpacing(2).fontColor('#ECE9F3')
         }.width('100%').alignItems(HorizontalAlign.Start)
         Row({ space: 4 }) {
           Text('专注空间').fontSize(12).fontWeight(FontWeight.Medium).fontColor('#E5DFF0')
@@ -156,7 +142,13 @@ export struct FocusPageView {
           .border({ width: 1, color: '#29344C' })
         if (this.resultPending) {
           Column({ space: 14 }) {
-            Text('这次学到了什么？').fontSize(18).fontWeight(FontWeight.Bold).fontColor('#ECE9F3').width('100%')
+            Row() {
+              Text('这次学到了什么？').fontSize(18).fontWeight(FontWeight.Bold).fontColor('#ECE9F3')
+              Blank()
+              Button('跳过').height(32).fontSize(12).fontWeight(FontWeight.Medium)
+                .fontColor('#D6CAE7').backgroundColor('#32303E').borderRadius(12)
+                .onClick(() => { this.skipResultNote(); })
+            }.width('100%').alignItems(VerticalAlign.Center)
               Text(formatSubjectName(this.currentTaskTitle)).fontSize(14).fontWeight(FontWeight.Medium).fontColor('#C1BACF').width('100%')
               TextArea({ text: this.resultNote, placeholder: '一句话记录收获，或仍不明白的地方' })
                 .fontColor('#FFFFFF').placeholderColor('#8E879A')
@@ -180,8 +172,8 @@ export struct FocusPageView {
                 Checkbox().select(this.resultChecked).onChange((value: boolean) => { this.onResultChecked(value); })
                 Text('我已按任务要求检查产出').fontSize(13).fontWeight(FontWeight.Medium).fontColor('#D6CAE7')
               }
-              Button('记录收获，继续下一步').width('100%').height(46).backgroundColor('#D6CAE7').fontColor('#282332')
-                .enabled(this.resultChecked && this.resultExperience.length > 0 && this.resultNote.trim().length >= 4)
+              Button('完成反馈，继续下一步').width('100%').height(46).backgroundColor('#D6CAE7').fontColor('#282332')
+                .enabled(this.resultChecked && this.resultExperience.length > 0)
                 .onClick(() => { this.onSubmitResult(); })
               Text('记录为自查完成，不计为知识掌握。').fontSize(11).fontWeight(FontWeight.Medium).fontColor('#ACA5BA')
               Button('还有不明白的，问 Agent').width('100%').height(40)

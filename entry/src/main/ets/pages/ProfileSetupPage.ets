@@ -26,7 +26,6 @@ export struct ProfileSetupPageView {
   onTextChange: (field: string, value: string) => void = () => {};
   onChoiceChange: (group: string, value: string) => void = () => {};
   onUseDemoSchedule: () => void = () => {};
-  onScanSchedule: () => void = () => {};
   onImportSchedule: () => void = () => {};
   onConfirmSchedule: () => void = () => {};
   onScheduleDraftItemsChange: (items: ScheduleItem[]) => void = () => {};
@@ -40,6 +39,9 @@ export struct ProfileSetupPageView {
     if (group === 'goal') {
       return this.profileGoal;
     }
+    if (group === 'subject') {
+      return this.profileSubject;
+    }
     if (group === 'time') {
       return this.profilePreferredTime;
     }
@@ -49,7 +51,20 @@ export struct ProfileSetupPageView {
     if (group === 'support') {
       return this.profileSupportStyle;
     }
-    return this.profileDailyMinutes.toString();
+    if (group === 'minutes') {
+      return this.profileDailyMinutes.toString();
+    }
+    // 目标区或未来新增的选择组不得意外读取“每日分钟数”。
+    return '';
+  }
+
+  private supportedSubject(): boolean {
+    return this.profileSubject === '高等数学' || this.profileSubject === '线性代数' ||
+      this.profileSubject === '大学英语';
+  }
+
+  private supportedDailyMinutes(): boolean {
+    return [60, 120, 180, 240, 300].includes(this.profileDailyMinutes);
   }
 
   @Builder
@@ -138,9 +153,6 @@ export struct ProfileSetupPageView {
             importMessage: this.scheduleImportMessage,
             importSource: this.scheduleImportSource,
             draftItems: this.scheduleDraftItems,
-            onScanDocument: () => {
-              this.onScanSchedule();
-            },
             onSelectImage: () => {
               this.onImportSchedule();
             },
@@ -165,11 +177,19 @@ export struct ProfileSetupPageView {
             this.ChoiceChip('goal', '考研准备', '考研准备')
             this.ChoiceChip('goal', '能力提升', '能力提升')
           }.width('100%')
-          TextInput({ placeholder: '当前最重要的科目', text: formatSubjectName(this.profileSubject) })
-            .width('100%').height(48).backgroundColor('#F6F7FB').borderRadius(14)
-            .onChange((value: string) => {
-              this.onTextChange('subject', value);
-            })
+          Text('当前最重要的科目').width('100%').fontSize(13).fontColor('#777C90')
+          Row({ space: 8 }) {
+            this.ChoiceChip('subject', '高等数学', '高等数学')
+            this.ChoiceChip('subject', '线性代数', '线性代数')
+          }.width('100%')
+          Row({ space: 8 }) {
+            this.ChoiceChip('subject', '大学英语', '大学英语')
+          }.width('100%')
+          if (!this.supportedSubject() && this.profileSubject.trim().length > 0) {
+            Text(`当前保存的科目：${formatSubjectName(this.profileSubject)}。选择上方科目后才会更新。`)
+              .width('100%').fontSize(11).lineHeight(17).fontColor('#8B90A5')
+          }
+          Text('考试/目标日期').width('100%').fontSize(13).fontColor('#777C90')
           TextInput({ placeholder: '考试日期，例如 2026-09-07', text: this.profileExamDate })
             .width('100%').height(48).backgroundColor('#F6F7FB').borderRadius(14)
             .onChange((value: string) => {
@@ -181,11 +201,18 @@ export struct ProfileSetupPageView {
         Column({ space: 14 }) {
           this.SetupSection('4', '学习节奏', '每天能学多久、什么时候更舒服')
           Row({ space: 8 }) {
-            this.ChoiceChip('minutes', '30', '30分钟')
-            this.ChoiceChip('minutes', '60', '60分钟')
-            this.ChoiceChip('minutes', '90', '90分钟')
-            this.ChoiceChip('minutes', '120', '120分钟')
+            this.ChoiceChip('minutes', '60', '1小时')
+            this.ChoiceChip('minutes', '120', '2小时')
+            this.ChoiceChip('minutes', '180', '3小时')
           }.width('100%')
+          Row({ space: 8 }) {
+            this.ChoiceChip('minutes', '240', '4小时')
+            this.ChoiceChip('minutes', '300', '5小时')
+          }.width('100%')
+          if (!this.supportedDailyMinutes()) {
+            Text(`当前保存为${this.profileDailyMinutes}分钟。选择上方时长后才会更新。`)
+              .width('100%').fontSize(11).lineHeight(17).fontColor('#8B90A5')
+          }
           Row({ space: 8 }) {
             this.ChoiceChip('time', '清晨', '清晨')
             this.ChoiceChip('time', '午后', '午后')

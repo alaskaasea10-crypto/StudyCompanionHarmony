@@ -1,6 +1,5 @@
 import { AgentGeneratedTask, AgentPlan, PlanCommitResult } from '../models/AgentModels';
 import { AcademicGoal, StudyTask } from '../models/StudyModels';
-import { GoalPlanningService } from './GoalPlanningService';
 import { StudyDataCenter } from './StudyDataCenter';
 import { BankPlanBudget } from './BankPlanBudget';
 
@@ -25,26 +24,16 @@ export class PlanCommitService {
       firstFocusMinutes: tasks[index].minutes };
   }
 
-  // 只重排尚未开始的当前阶段；其他目标、手动任务和已有结果始终保留。
-  static reconcile(existing: StudyTask[], plan: AgentPlan, goal?: AcademicGoal, protectedTaskId?: string): PlanCommitResult {
-    const milestone = goal === undefined ? undefined : GoalPlanningService.nextMilestone(goal);
+  // 兼容旧调用签名；长期目标只提供上下文，不再绑定或替换 milestone 任务。
+  static reconcile(existing: StudyTask[], plan: AgentPlan, _goal?: AcademicGoal, protectedTaskId?: string): PlanCommitResult {
     const kept: StudyTask[] = existing.filter((task: StudyTask) => {
       if ((protectedTaskId !== undefined && task.id === protectedTaskId) || task.completed || (task.focusedAt ?? 0) > 0 || task.outcome !== undefined ||
         task.source === 'manual' || task.source === 'video-library' || task.source === 'question-bank') { return true; }
-      if (task.goalId !== undefined) {
-        return goal === undefined || goal.subject !== plan.detectedSubject ||
-          task.goalId !== goal.id || task.milestoneId !== milestone?.id;
-      }
       return task.subject !== plan.detectedSubject;
     });
     const generated: PlanCommitResult = PlanCommitService.commit(plan);
     const added: StudyTask[] = generated.tasks.filter((task: StudyTask) =>
       !kept.some((item: StudyTask) => !item.completed && item.subject === task.subject && item.title === task.title));
-    added.forEach((task: StudyTask) => {
-      if (goal !== undefined && milestone !== undefined && task.subject === goal.subject) {
-        task.goalId = goal.id; task.milestoneId = milestone.id;
-      }
-    });
     const tasks: StudyTask[] = kept.concat(added);
     if (tasks.length === 0) { throw new Error('没有可保存的任务'); }
     const index: number = added.length > 0 ? kept.length : Math.max(0, tasks.findIndex((task: StudyTask) => !task.completed));

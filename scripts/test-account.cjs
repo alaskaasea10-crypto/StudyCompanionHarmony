@@ -76,15 +76,23 @@ const store = {
   const resetStart = index.indexOf('private async resetProfile()');
   const resetEnd = index.indexOf('private hostAbilityContext()', resetStart);
   const reset = index.slice(resetStart, resetEnd);
-  assert.ok(reset.includes('this.profileCompleted = false;'));
-  assert.ok(reset.includes('await this.persistState();'));
+  assert.ok(reset.includes('this.profileSetupEditing = true;'));
+  assert.ok(!reset.includes('this.profileCompleted = false;'),
+    'editing an existing profile must not reset the completed onboarding marker');
   assert.ok(!reset.includes("this.profileName = ''"),
     'resetting setup must not silently erase the user nickname');
 
   assert.ok(setup.includes("this.onTextChange('name', value);"), 'setup edits the real profile nickname');
+  assert.equal(setup.includes("this.onTextChange('subject', value);"), false,
+    'setup subject is selected from fixed choices and never opens a free-text editor');
+  assert.ok(setup.includes("this.ChoiceChip('subject', '高等数学', '高等数学')"));
+  assert.ok(setup.includes("this.ChoiceChip('minutes', '300', '5小时')"));
+  assert.ok(index.includes('this.syncProfileToAcademicGoal();'),
+    'reset setup updates the current persisted academic goal instead of rebuilding it');
   assert.ok(setup.includes('this.onSaveProfile();'), 'setup requires explicit confirmation');
   assert.ok(profile.includes('Text(this.profileName)'), 'the profile page renders the persisted nickname');
-  assert.ok(index.includes('if (!this.profileLoaded)') && index.includes('ProfileSetupPageView({'),
+  assert.ok(index.includes('if (!this.profileLoaded)') &&
+    index.includes('!this.profileCompleted || this.profileSetupEditing') && index.includes('ProfileSetupPageView({'),
     'first initialization stays in setup until local profile loading completes');
 
   console.log('PASS account/profile: current AppRoot, explicit first setup, local persistence, restart restore, rollback and reset preservation');

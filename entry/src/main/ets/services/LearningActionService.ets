@@ -41,20 +41,33 @@ export class LearningActionService {
     return Math.min(minutes, Math.max(10, Math.round(minutes * 0.6)));
   }
 
-  static budget(snapshot: StudyStateSnapshot, now: number = Date.now()): number {
+  // 已归档记录与尚未入账的当前专注只在这里汇总，避免 UI、调度和云端上下文各算一套。
+  static focusedMinutes(snapshot: StudyStateSnapshot, now: number = Date.now()): number {
     const day: string = TodayStudyOverrideService.date(now);
     const metrics = StudyDataCenter.calculateMetrics(snapshot.tasks ?? [], snapshot.focusRecords ?? [],
       snapshot.quizAttempts ?? [], day, snapshot.studyDayKey === day ? snapshot.todayMinutes ?? 0 : 0);
-    const override: TodayStudyOverride | undefined = TodayStudyOverrideService.active(snapshot, now);
-    // 建档目标不是实际空闲；只有今日明确填写的分钟数才覆盖它。
-    const daily: number = override?.availableMinutes !== undefined && Number.isFinite(override.availableMinutes) ?
-      Math.min(240, Math.max(0, override.availableMinutes)) :
-      Math.min(240, Math.max(15, snapshot.profileDailyMinutes ?? 60));
     const activeSeconds: number = snapshot.isRunning && snapshot.focusSegmentStartedAt > 0 ?
       Math.max(0, Math.floor((now - snapshot.focusSegmentStartedAt) / 1000)) : 0;
     const uncredited: number = snapshot.focusSessionCredited ? 0 :
       Math.floor(Math.min((snapshot.focusMinutes ?? 25) * 60, (snapshot.focusElapsedSeconds ?? 0) + activeSeconds) / 60);
-    const remaining: number = Math.max(0, daily - metrics.todayFocusMinutes - uncredited);
+    return Math.max(0, metrics.todayFocusMinutes + uncredited);
+  }
+
+  // UI 询问“从现在起还想学多久”；持久层仍兼容原来的“当天总预算”字段。
+  static totalBudgetForAdditional(snapshot: StudyStateSnapshot, additionalMinutes: number,
+    now: number = Date.now()): number {
+    const additional: number = Math.min(240, Math.max(0, Math.floor(additionalMinutes)));
+    return LearningActionService.focusedMinutes(snapshot, now) + additional;
+  }
+
+  static budget(snapshot: StudyStateSnapshot, now: number = Date.now()): number {
+    const override: TodayStudyOverride | undefined = TodayStudyOverrideService.active(snapshot, now);
+    // 建档目标不是实际空闲；availableMinutes 保持历史兼容，内部表示当天总预算。
+    const daily: number = override?.availableMinutes !== undefined && Number.isFinite(override.availableMinutes) ?
+      Math.max(0, override.availableMinutes) :
+      Math.min(300, Math.max(15, snapshot.profileDailyMinutes ?? 60));
+    const remaining: number = Math.min(300,
+      Math.max(0, daily - LearningActionService.focusedMinutes(snapshot, now)));
     return snapshot.energyState === '有点累' ? Math.min(remaining, Math.max(15, Math.round(daily * 0.6))) : remaining;
   }
 
@@ -101,7 +114,7 @@ export class LearningActionService {
   // 全部真实未完成任务形成候选池；目标只提供关联任务的真实日期，不缩小候选范围。
   static candidates(snapshot: StudyStateSnapshot, now: number = Date.now()): DailyCandidate[] {
     const override: TodayStudyOverride | undefined = TodayStudyOverrideService.active(snapshot, now);
-    const goals: AcademicGoal[] = snapshot.academicGoals ?? [];
+    const goals: AcademicGoal[] = GoalPlanningService.activeGoals(snapshot.academicGoals ?? [], now);
     const deferred = (task: StudyTask): boolean => (snapshot.actionDeferrals ?? [])
       .some(item => item.key === `task:${task.id}` && item.until > now);
     const candidates: DailyCandidate[] = [];
@@ -165,7 +178,9 @@ export class LearningActionService {
     // 提交本轮收获不占用学习预算，也不要求课表空档。
     const budget: number = LearningActionService.budget(snapshot, now);
     const free: number | undefined = LearningActionService.freeMinutes(snapshot, now);
-    if (budget < 5) { return LearningActionService.waiting(subject, '今天先到这里', '今日学习目标已用完，任务仍保留'); }
+    if (budget < 5) {
+      return LearningActionService.waiting(subject, '今天原定安排已经完成', '还想继续？可以调整今天安排，任务仍会保留');
+    }
     if (free !== undefined && free < 5) { return LearningActionService.waiting(subject, '先安心上课', '课后再继续，任务不会丢'); }
     const first: DailyCandidate | undefined = LearningActionService.candidates(snapshot, now)[0];
     if (first === undefined) {

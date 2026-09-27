@@ -6,6 +6,7 @@ import { AcademicGoal, ScheduleItem } from '../models/StudyModels';
 import { AgentDailyPlanItem, AgentDecisionEvidence, AgentDecisionReason, AgentDecisionResult } from '../services/AgentDecisionService';
 import { formatSubjectName } from '../utils/SubjectDisplayName';
 import { LearningResourcePicker } from '../components/LearningResourcePicker';
+import { GoalPlanningService } from '../services/GoalPlanningService';
 
 @Component
 export struct LearningHubPageView {
@@ -28,7 +29,6 @@ export struct LearningHubPageView {
   @Prop academicGoals: AcademicGoal[] = [];
   onPrimaryAction: () => void = () => {};
   onOpenSchedule: () => void = () => {};
-  onScanSchedule: () => void = () => {};
   onImportSchedule: () => void = () => {};
   onConfirmSchedule: () => void = () => {};
   onScheduleDraftItemsChange: (items: ScheduleItem[]) => void = () => {};
@@ -95,7 +95,7 @@ export struct LearningHubPageView {
   }
 
   private visibleGoals(): AcademicGoal[] {
-    return this.academicGoals.filter((goal: AcademicGoal) => !goal.completed).slice(0, 3);
+    return GoalPlanningService.activeGoals(this.academicGoals, this.now).slice(0, 2);
   }
 
   private goalDate(deadline: string): string {
@@ -292,7 +292,7 @@ export struct LearningHubPageView {
               }.width('100%')
             }, (goal: AcademicGoal) => goal.id)
           } else {
-            Text('还没有进行中的长期学习目标，添加后小星球会参考它安排每天的节奏。')
+            Text('暂未设置学习目标')
               .fontSize(12).lineHeight(18).fontColor('#858BA1').width('100%')
           }
         }.width('100%').padding(16).alignItems(HorizontalAlign.Start)
@@ -335,14 +335,15 @@ export struct LearningHubPageView {
               importMessage: this.scheduleImportMessage,
               importSource: this.scheduleImportSource,
               draftItems: this.scheduleDraftItems,
-              onScanDocument: () => { this.onScanSchedule(); },
               onSelectImage: () => { this.onImportSchedule(); },
               onConfirm: () => { this.onConfirmSchedule(); },
               onRetry: () => { this.onImportSchedule(); },
               onDraftItemsChange: (items: ScheduleItem[]) => { this.onScheduleDraftItemsChange(items); }
             })
           }
-        }.width('100%').padding(18).backgroundColor('#EEEDFA').borderRadius(22)
+        }.width('100%').padding(16).alignItems(HorizontalAlign.Start)
+          .backgroundColor('#F7F6FC').borderRadius(18)
+          .border({ width: 1, color: '#E7E4F5' })
 
       }.padding({ left: 20, right: 20, top: 22, bottom: 28 })
         .width('100%').alignItems(HorizontalAlign.Start)

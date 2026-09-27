@@ -52,4 +52,18 @@ const titleMap = fs.readFileSync(path.join(root, 'entry/src/main/ets/utils/Subje
 for (const title of ['FinalReview', 'EnglishHomework', 'MatrixChapterReview']) {
   assert.equal(titleMap.includes(title), false, `${title} must remain user data, not a subject mapping`);
 }
+
+const importCard = fs.readFileSync(path.join(root, 'entry/src/main/ets/components/ScheduleImportCard.ets'), 'utf8');
+assert.equal(importCard.includes("'重新扫描'"), false);
+assert.equal(importCard.includes("Button('智能扫描')"), false);
+assert.equal(importCard.includes('onScanDocument'), false);
+assert.ok(importCard.includes("this.setupScheduleReady ? '重新上传课表' : '直接选择课表截图'"));
+assert.match(importCard, /重新上传课表[\s\S]*?\.onClick\(\(\) => \{\s*this\.onSelectImage\(\);/);
+const planPage = fs.readFileSync(path.join(root, 'entry/src/main/ets/pages/PlanPage.ets'), 'utf8');
+assert.match(planPage, /onSelectImage:\s*\(\) => \{\s*this\.onImportSchedule\(\);/);
+
+const learningHub = fs.readFileSync(path.join(root, 'entry/src/main/ets/pages/LearningHubPage.ets'), 'utf8');
+assert.ok(learningHub.includes(".backgroundColor('#F7F6FC').borderRadius(18)"));
+assert.ok(learningHub.includes(".border({ width: 1, color: '#E7E4F5' })"));
+assert.equal(learningHub.includes(".backgroundColor('#EEEDFA').borderRadius(22)"), false);
 console.log('PASS schedule editing: stable identity, add/delete, validation, shared persisted source and no title-translation hack');

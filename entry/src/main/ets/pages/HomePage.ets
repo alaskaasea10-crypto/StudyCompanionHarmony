@@ -49,6 +49,7 @@ export struct HomePageView {
   @Prop tasks: StudyTask[] = [];
   @Prop todayStudyOverride: TodayStudyOverride = { date: '' };
   @Prop todayDate: string = '';
+  @Prop todayRemainingMinutes: number = 0;
   @Prop recommendationTitle: string = '';
   @Prop recommendationSubject: string = '';
   @Prop recommendationReason: string = '';
@@ -140,7 +141,7 @@ export struct HomePageView {
       this.tasks[index].id === this.todayStudyOverride.preferredTaskId) ?? -1;
     this.draftPriorityMode = this.draftTaskIndex >= 0 ? 'manual' : 'auto';
     this.draftAvailableMinutes = this.todayStudyOverride.availableMinutes === undefined ? '' :
-      `${this.todayStudyOverride.availableMinutes}`;
+      `${Math.max(0, Math.floor(this.todayRemainingMinutes))}`;
     this.draftPreferredSubject = this.todayStudyOverride.preferredSubject ?? '';
     this.draftSkippedTaskIds = (this.todayStudyOverride.skippedTaskIds ?? []).slice();
     this.draftTitle = '';
@@ -169,7 +170,7 @@ export struct HomePageView {
 
   private saveTodayAdjust(): void {
     const raw: string = this.draftAvailableMinutes.trim();
-    if (raw.length > 0 && (!/^\d+$/.test(raw) || Number(raw) > 240)) { return; }
+    if (!this.validAdditionalMinutes()) { return; }
     const preferredTaskId: string = this.draftPriorityMode === 'manual' && this.draftTaskIndex >= 0 ?
       this.tasks[this.draftTaskIndex].id ?? '' : '';
     const override: TodayStudyOverride = { date: this.todayDate,
@@ -181,6 +182,11 @@ export struct HomePageView {
       this.draftSubject, this.draftMinutes);
     this.closeTodayAdjust();
     this.detailsOpen = false;
+  }
+
+  private validAdditionalMinutes(): boolean {
+    const raw: string = this.draftAvailableMinutes.trim();
+    return raw.length === 0 || (/^\d+$/.test(raw) && Number(raw) <= 240);
   }
 
   private deleteTaskTitle(): string {
@@ -239,7 +245,7 @@ export struct HomePageView {
         Row({ space: 12 }) {
           Column({ space: 4 }) {
             Text('当前目标').fontSize(12).fontColor('#858B9D')
-            Text(formatSubjectName(this.activeGoalTitle.length > 0 ? this.activeGoalTitle : this.profileSubject))
+            Text(formatSubjectName(this.activeGoalTitle.length > 0 ? this.activeGoalTitle : '暂未设置学习目标'))
               .fontSize(18).fontWeight(FontWeight.Medium).fontColor('#363B53')
               .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
             if (this.activeGoalReason.length > 0) {
@@ -418,11 +424,21 @@ export struct HomePageView {
             Text('×').width(34).height(34).textAlign(TextAlign.Center).fontSize(24).fontColor('#777D90')
               .onClick(() => { this.closeTodayAdjust(); })
           }.width('100%')
-          Text('今天总共可学习分钟数（包含已专注）').fontSize(12).fontWeight(FontWeight.Medium)
+          Text('接下来还想学多久？').fontSize(12).fontWeight(FontWeight.Medium)
             .fontColor('#666B80').width('100%')
-          TextInput({ text: this.draftAvailableMinutes, placeholder: '留空表示未知；0 表示今天没有时间' })
+          Row({ space: 8 }) {
+            ForEach([15, 30, 60], (minutes: number) => {
+              Text(`${minutes}分钟`).layoutWeight(1).height(34).textAlign(TextAlign.Center).fontSize(11)
+                .fontColor(this.draftAvailableMinutes === `${minutes}` ? Color.White : '#6865D9')
+                .backgroundColor(this.draftAvailableMinutes === `${minutes}` ? '#6865D9' : '#EFEEFA')
+                .borderRadius(11).onClick(() => { this.draftAvailableMinutes = `${minutes}`; })
+            }, (minutes: number) => `additional-minutes-${minutes}`)
+          }.width('100%')
+          TextInput({ text: this.draftAvailableMinutes, placeholder: '可自定义；留空表示未知，0 表示暂不追加' })
             .width('100%').height(42).fontSize(12).backgroundColor('#F3F2F9').borderRadius(12)
             .onChange((value: string) => { this.draftAvailableMinutes = value; })
+          Text('这里填写的是从现在开始愿意再投入的时间，不需要加上今天已经专注的分钟数。')
+            .fontSize(10).lineHeight(16).fontColor('#8A8FA2').width('100%')
           Text('今天想优先处理的科目（可不填）').fontSize(12).fontColor('#666B80').width('100%')
           TextInput({ text: formatSubjectName(this.draftPreferredSubject), placeholder: '例如：大学英语' })
             .width('100%').height(42).fontSize(12).backgroundColor('#F3F2F9').borderRadius(12)
@@ -509,12 +525,18 @@ export struct HomePageView {
           }
           if (this.draftAvailableMinutes.trim().length > 0 &&
             (!/^\d+$/.test(this.draftAvailableMinutes.trim()) || Number(this.draftAvailableMinutes) > 240)) {
-            Text('请输入 0—240 分钟，或留空表示未知').fontSize(11).fontColor('#D85353')
+            Text('请输入 0—240 分钟；超过范围不会保存').fontSize(11).fontColor('#D85353')
+          }
+          if (this.draftPriorityMode === 'manual' && this.draftTaskIndex >= 0 &&
+            this.draftAvailableMinutes.trim() === '0') {
+            Text('已选择优先待办，但接下来时间为 0；保存后不会强行开始任务。')
+              .fontSize(10).lineHeight(16).fontColor('#A06A35').width('100%')
           }
           Row({ space: 9 }) {
             Button('保存今天的安排').layoutWeight(1).height(42).fontSize(12)
               .backgroundColor('#6865D9').borderRadius(13)
-              .enabled(!this.addingTemporaryTask || this.draftTitle.trim().length > 0)
+              .enabled(this.validAdditionalMinutes() &&
+                (!this.addingTemporaryTask || this.draftTitle.trim().length > 0))
               .onClick(() => { this.saveTodayAdjust(); })
           }.width('100%')
         }.width('100%').padding(20)

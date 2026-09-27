@@ -29,6 +29,7 @@ export interface ActionDeferral {
 // 只影响指定日期的调度；临时任务仍使用原 StudyTask 和稳定 taskId 保存。
 export interface TodayStudyOverride {
   date: string;
+  // 持久层兼容字段：当天总预算。界面输入“接下来时长”时在保存边界换算为 已专注 + 追加分钟。
   availableMinutes?: number;
   preferredTaskId?: string;
   preferredSubject?: string;
@@ -128,7 +129,8 @@ export interface StudyMetrics {
 
 export interface StudyStateSnapshot {
   schemaVersion?: number;
-  profileCompleted: boolean;
+  // 旧版快照可能没有这个字段；加载时由 ProfileCompletionService 做一次兼容判断。
+  profileCompleted?: boolean;
   profileAvatarUri?: string;
   profileName: string;
   profileGrade: string;
@@ -147,7 +149,7 @@ export interface StudyStateSnapshot {
   academicGoals?: AcademicGoal[];
   actionDeferrals?: ActionDeferral[];
   todayStudyOverride?: TodayStudyOverride;
-  // 已永久删除的稳定 taskId；防止长期目标阶段任务在重启时被自动补回。
+  // 已永久删除的稳定 taskId；用于清理今日覆盖、延期等仍可能引用旧任务的状态。
   deletedTaskIds?: string[];
   preferredTaskId?: string;
   currentTaskIndex: number;
@@ -173,6 +175,9 @@ export interface StudyStateSnapshot {
   squadMessage?: string;
   squadMembers?: SquadMember[];
   squadInviteCode?: string;
+  // 当前仅为本机演示状态，不代表已连接真实多人服务器。
+  squadJoined?: boolean;
+  squadName?: string;
   squadChallengeTitle?: string;
   squadChallengeMinutes?: number;
   squadChallengeJoinedCount?: number;

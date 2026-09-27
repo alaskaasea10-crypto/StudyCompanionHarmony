@@ -80,8 +80,10 @@ assert.ok(decision.dailyPlan.every(item => removed.tasks.some(task => task.id ==
 
 const indexSource = fs.readFileSync(path.join(root, 'pages/Index.ets'), 'utf8');
 assert.ok(indexSource.includes('deletedTaskIds: this.deletedTaskIds'), 'deletion tombstones must be persisted');
-assert.ok(indexSource.includes("!(this.deletedTaskIds ?? []).includes(milestoneTask.id ?? '')"),
-  'deleted goal milestone task must not be recreated after reload');
+assert.equal(indexSource.includes('ensureGoalMilestoneTask'), false,
+  'long-term goals must not recreate any deleted milestone task after reload');
+assert.equal(indexSource.includes('GoalPlanningService.taskFor'), false,
+  'there must be no milestone-to-task generation path');
 assert.ok(indexSource.includes('Array.isArray(snapshot.tasks) ? storedTasks'),
   'a persisted empty task list must not restore demo tasks');
 assert.ok(indexSource.includes('snapshot.focusMinutes ?? this.tasks[0]?.minutes ?? this.profileDailyMinutes'),

@@ -47,8 +47,10 @@ page.squadMembers = [
   { id: 'self', name: '我', status: '专注中', isSelf: true, isDemo: false },
   { id: 'rain', name: '小雨', status: '专注中', isSelf: false, isDemo: true }
 ];
-assert.equal(page.focusingCount(), 1);
-assert.ok(page.focusingSummary().includes('含体验成员'));
+const focusSource = fs.readFileSync(path.join(root, 'pages/FocusPage.ets'), 'utf8');
+assert.equal(focusSource.includes('focusingSummary'), false);
+assert.equal(focusSource.includes('人真实专注'), false);
+assert.equal(focusSource.includes('含体验成员'), false);
 const Orbit = loadBehavior('components/OrbitField.ets', 'OrbitField', '  build() {');
 const orbit = new Orbit();
 for (const width of [280, 320, 400]) {

@@ -1,17 +1,17 @@
 import { PageHeader } from '../components/PageHeader';
 import { ScheduleImportCard } from '../components/ScheduleImportCard';
 import { SectionSwitcher } from '../components/SectionSwitcher';
-import { AcademicGoal, GoalMilestone, ScheduleItem, StudyTask } from '../models/StudyModels';
+import { AcademicGoal, ScheduleItem } from '../models/StudyModels';
 import { formatSubjectName } from '../utils/SubjectDisplayName';
 import { ScheduleItemEditor } from '../components/ScheduleItemEditor';
 import { ScheduleEditingService } from '../services/ScheduleEditingService';
+import { GoalPlanningService } from '../services/GoalPlanningService';
 
 @Component
 export struct PlanPageView {
   @Prop scheduleOnly: boolean = false;
   onBack: () => void = () => {};
   @State addingGoal: boolean = false;
-  @State expandedGoal: string = '';
   @State selectedWeekday: number = 1;
   @State editingSchedule: boolean = false;
   @State editingScheduleItems: ScheduleItem[] = [];
@@ -31,29 +31,20 @@ export struct PlanPageView {
   @Prop scheduleImportMessage: string = '';
   @Prop scheduleImportSource: string = '';
   @Prop scheduleDraftItems: ScheduleItem[] = [];
-  @Prop newTaskTitle: string = '';
-  @Prop profileSubject: string = '';
-  @Prop profileExamDate: string = '';
-  @Prop examDays: number = 0;
-  @Prop tasks: StudyTask[] = [];
   @Prop academicGoals: AcademicGoal[] = [];
+  @Prop now: number = Date.now();
   @Prop newGoalTitle: string = '';
   @Prop newGoalSubject: string = '';
   @Prop newGoalDeadline: string = '';
   @Prop newGoalEstimatedMinutes: string = '';
   onUseDemoSchedule: () => void = () => {};
-  onScanSchedule: () => void = () => {};
   onImportSchedule: () => void = () => {};
   onConfirmSchedule: () => void = () => {};
   onScheduleDraftItemsChange: (items: ScheduleItem[]) => void = () => {};
   onSaveSchedule: (items: ScheduleItem[]) => Promise<boolean> = async () => false;
   onOpenLearning: () => void = () => {};
-  onNewTaskTitleChange: (value: string) => void = () => {};
-  onAddTask: () => void = () => {};
-  onStartTask: (index: number) => void = () => {};
   onGoalFieldChange: (field: string, value: string) => void = () => {};
   onAddGoal: () => void = () => {};
-  onToggleGoal: (id: string) => void = () => {};
   onUpdateGoal: (id: string, title: string, subject: string, deadline: string,
     estimatedMinutes: number) => Promise<boolean> = async () => false;
 
@@ -146,6 +137,18 @@ export struct PlanPageView {
     this.goalEditError = '保存失败，原目标没有改变，请重试。';
   }
 
+  private deadlineStatus(goal: AcademicGoal): string {
+    const days: number = GoalPlanningService.daysUntil(goal.deadline, this.now);
+    if (days === 999) { return '日期待确认'; }
+    if (days < 0) { return `已逾期${Math.abs(days)}天`; }
+    if (days === 0) { return '今天截止'; }
+    return `还有${days}天`;
+  }
+
+  private currentGoals(): AcademicGoal[] {
+    return GoalPlanningService.activeGoals(this.academicGoals, this.now);
+  }
+
   @Builder
   WeekdayButton(weekday: number) {
     Column({ space: 3 }) {
@@ -184,58 +187,34 @@ export struct PlanPageView {
     .backgroundColor('#F8F8FC').borderRadius(14)
   }
 
-  @Builder
-  TaskCard(index: number) {
-    Row({ space: 12 }) {
-      Column({ space: 4 }) {
-        Text(formatSubjectName(this.tasks[index].title))
-          .width('100%').fontSize(16).fontWeight(FontWeight.Medium)
-          .fontColor(this.tasks[index].completed ? '#9A9EB0' : '#25283A')
-        Text(`${formatSubjectName(this.tasks[index].subject)} · ${this.tasks[index].minutes}分钟`)
-          .width('100%').fontSize(12).fontColor('#9A9EB0')
-      }.layoutWeight(1)
-      if (this.tasks[index].completed) {
-        Text(this.tasks[index].outcome === 'verified' ? '验证通过' :
-          this.tasks[index].outcome === 'submitted' ? '已自查' : '已完成').fontSize(13).fontColor('#22B07D').backgroundColor('#E8F8F2')
-          .padding({ left: 11, right: 11, top: 7, bottom: 7 }).borderRadius(14)
-      } else {
-        Button(this.tasks[index].outcome === 'focused' || this.tasks[index].outcome === 'submitted' ? '交结果' : '开始')
-          .fontSize(13).height(36).backgroundColor('#5B5FEF')
-          .onClick(() => {
-            this.onStartTask(index);
-          })
-      }
-    }
-    .width('100%').padding(16).backgroundColor(Color.White).borderRadius(18)
-  }
-
   build() {
     Scroll() {
       Column({ space: 16 }) {
         Text('‹ 返回学习').fontSize(14).fontColor('#6865D9').width('100%').onClick(() => { this.onBack(); })
-        PageHeader({ icon: '', title: this.scheduleOnly ? '课表与时间' : '学习目标', subtitle: this.scheduleOnly ? '先看课程，再安排可用时间' : '管理跨天目标；今天的变化请到首页“调整今天安排”' })
+        PageHeader({ icon: '', title: this.scheduleOnly ? '课表与时间' : '学习目标', subtitle: this.scheduleOnly ? '先看课程，再安排可用时间' : '管理跨天目标，今天的学习安排请到首页“调整今天安排”' })
         if (!this.scheduleOnly) {
         Button('和小星球聊长期目标').width('100%').height(44).backgroundColor('#6865D9')
           .onClick(() => { this.onOpenLearning(); })
         Column({ space: 12 }) {
           Text('目标中心').width('100%').fontSize(18).fontWeight(FontWeight.Bold)
-          Text('考试、课程与项目可以同时存在；这里保存跨天目标')
+          Text('考试、课程与项目可以同时存在；这里保存跨天提醒')
             .width('100%').fontSize(12).lineHeight(20).fontColor('#858B9E')
-          ForEach(this.academicGoals, (goal: AcademicGoal) => {
+          if (this.currentGoals().length === 0) {
+            Text('暂无进行中的学习目标').width('100%').fontSize(13).fontColor('#969CAD')
+              .padding({ top: 8, bottom: 8 })
+          }
+          ForEach(this.currentGoals(), (goal: AcademicGoal) => {
             Row({ space: 10 }) {
               Column({ space: 4 }) {
                 Text(goal.title).width('100%').fontSize(15).fontWeight(FontWeight.Bold)
                   .fontColor(goal.completed ? '#999EAC' : '#2F3448')
-                Text(`${formatSubjectName(goal.subject)} · 截止 ${goal.deadline}`)
+                Text(`${formatSubjectName(goal.subject)} · ${goal.deadline}`)
                   .width('100%').fontSize(11).fontColor('#8C92A4')
-                Text(`阶段 ${(goal.milestones ?? []).filter((item: GoalMilestone) => item.completed).length} / ${(goal.milestones ?? []).length}`)
-                  .width('100%').fontSize(11).fontColor('#596EA7')
+                Text(this.deadlineStatus(goal)).width('100%').fontSize(11)
+                  .fontColor(GoalPlanningService.daysUntil(goal.deadline, this.now) < 0 ? '#B05C62' : '#596EA7')
               }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-              Column({ space: 5 }) {
-                Text('编辑').height(32).fontSize(12).fontWeight(FontWeight.Bold).fontColor('#625DC0')
-                  .onClick(() => { this.beginGoalEdit(goal); })
-                Text(goal.completed ? '阶段已完成' : '按阶段推进').fontSize(10).fontColor('#8B90A1')
-              }.alignItems(HorizontalAlign.End)
+              Text('编辑').height(32).fontSize(12).fontWeight(FontWeight.Bold).fontColor('#625DC0')
+                .onClick(() => { this.beginGoalEdit(goal); })
             }.width('100%').padding(13).backgroundColor('#F6F7FC').borderRadius(14)
             if (this.editingGoalId === goal.id) {
               Column({ space: 9 }) {
@@ -270,22 +249,6 @@ export struct PlanPageView {
               }.width('100%').padding(13).alignItems(HorizontalAlign.Start)
                 .backgroundColor('#F0EFFA').borderRadius(14)
             }
-            Text(this.expandedGoal === goal.id ? '收起阶段 ⌃' : '查看阶段 ›').fontSize(12).fontColor('#596EA7').width('100%')
-              .onClick(() => { this.expandedGoal = this.expandedGoal === goal.id ? '' : goal.id; })
-            if (this.expandedGoal === goal.id) {
-            ForEach(goal.milestones ?? [], (milestone: GoalMilestone, index: number) => {
-              Row({ space: 8 }) {
-                Text(milestone.completed ? '✓' : `${index + 1}`)
-                  .width(22).height(22).textAlign(TextAlign.Center).fontSize(11)
-                  .fontColor(milestone.completed ? Color.White : '#596EA7')
-                  .backgroundColor(milestone.completed ? '#35B58A' : '#EBEFF8').borderRadius(11)
-                Column({ space: 2 }) {
-                  Text(formatSubjectName(milestone.title)).width('100%').fontSize(12).fontColor('#4A5065')
-                  Text(`计划 ${milestone.dueDate} 前完成`).width('100%').fontSize(10).fontColor('#969CAD')
-                }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-              }.width('100%').padding({ left: 12, right: 12 })
-            }, (milestone: GoalMilestone) => milestone.id)
-            }
           }, (goal: AcademicGoal) => `${goal.id}-${goal.title}-${goal.subject}-${goal.deadline}-${goal.estimatedMinutes}`)
           Button(this.addingGoal ? '取消新增' : '＋ 新目标').fontSize(13).backgroundColor('#EBEFF8').fontColor('#596EA7')
             .onClick(() => { this.addingGoal = !this.addingGoal; })
@@ -301,7 +264,7 @@ export struct PlanPageView {
           TextInput({ placeholder: '预计总投入（分钟，60—6000）', text: this.newGoalEstimatedMinutes })
             .height(43).backgroundColor('#F6F7FC')
             .onChange((value: string) => { this.onGoalFieldChange('minutes', value); })
-          Button('添加目标并生成第一步').width('100%').height(44).backgroundColor('#596EA7')
+          Button('添加目标').width('100%').height(44).backgroundColor('#596EA7')
             .onClick(() => { this.onAddGoal(); })
           }
         }.width('100%').padding(18).backgroundColor(Color.White).borderRadius(20)
@@ -389,9 +352,6 @@ export struct PlanPageView {
             importMessage: this.scheduleImportMessage,
             importSource: this.scheduleImportSource,
             draftItems: this.scheduleDraftItems,
-            onScanDocument: () => {
-              this.onScanSchedule();
-            },
             onSelectImage: () => {
               this.onImportSchedule();
             },
@@ -408,14 +368,6 @@ export struct PlanPageView {
           })
         }
         .width('100%').padding(18).backgroundColor(Color.White).borderRadius(20)
-        }
-        if (!this.scheduleOnly) {
-        Text('目标关联的学习任务').fontSize(17).fontWeight(FontWeight.Bold).width('100%')
-        Text('今天的临时任务、可学习时间和优先项，请在首页调整今天安排。')
-          .fontSize(12).fontColor('#858B9D').width('100%')
-        ForEach(this.tasks, (task: StudyTask, index: number) => {
-          if (task.source !== 'today-temporary') { this.TaskCard(index) }
-        }, (task: StudyTask, index: number) => `${index}-${task.title}`)
         }
       }
       .width('100%').padding(20)

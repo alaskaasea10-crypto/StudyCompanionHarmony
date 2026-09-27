@@ -64,6 +64,12 @@ export struct ProfilePageView {
     }.width('100%')
   }
 
+  private examDateSummary(): string {
+    if (this.examDays < 0) { return `${this.profileExamDate} · 已过期${Math.abs(this.examDays)}天`; }
+    if (this.examDays === 0) { return `${this.profileExamDate} · 今天`; }
+    return `${this.profileExamDate} · 还有${this.examDays}天`;
+  }
+
   build() {
     Scroll() {
       Column({ space: 18 }) {
@@ -117,7 +123,7 @@ export struct ProfilePageView {
           Row() {
             Text('考试日期').fontSize(14).fontColor('#8B90A5')
             Blank()
-            Text(`${this.profileExamDate} · ${this.examDays}天`).fontSize(14).fontWeight(FontWeight.Medium)
+            Text(this.examDateSummary()).fontSize(14).fontWeight(FontWeight.Medium)
           }.width('100%')
         }
         .width('100%').padding(20).backgroundColor(Color.White).borderRadius(20)

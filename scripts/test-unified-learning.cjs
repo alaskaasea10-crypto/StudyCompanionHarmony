@@ -88,10 +88,11 @@ const other = {...task,id:'other',goalId:'g2',subject:'操作系统'}, manual={.
 const plan = {detectedSubject:'数据结构',source:'openpangu',tasks:[{title:'整理接口',subject:'数据结构',minutes:15},{title:'完成接口草稿',subject:'数据结构',minutes:15}]};
 const committed = plans.reconcile([task,other,manual,focused],plan,goal);
 assert.ok(committed.tasks.includes(other)); assert.ok(committed.tasks.includes(manual)); assert.ok(committed.tasks.includes(focused));
-assert.ok(committed.tasks.slice(-2).every(t=>t.goalId==='g'&&t.milestoneId==='m1'));
+assert.ok(committed.tasks.slice(-2).every(t=>t.goalId===undefined&&t.milestoneId===undefined),
+  'an explicit plan task must not be attached to legacy goal milestones');
 const legacyRunning={...task,goalId:undefined,milestoneId:undefined,source:'legacy'};
 assert.ok(plans.reconcile([legacyRunning],plan,goal,'t1').tasks.includes(legacyRunning));
-// 执行真实 Index 方法：计时结束不推进目标；同阶段所有任务提交后才解锁。
+// 执行真实 Index 方法：计时结束进入反馈，但长期目标不推进或生成任务。
 const index = fs.readFileSync(path.join(root,'entry/src/main/ets/pages/Index.ets'),'utf8');
 function method(start,end) { return index.slice(index.indexOf(start),index.indexOf(end)); }
 let liveViewStops=0;
@@ -103,7 +104,6 @@ const H = evaluate(`class H {
   persistSilently(){this.persists++;}
   openTaskResult(index){this.opened=index;} setTaskCompleted(){throw Error('timer must not complete task');}
   ${method('  private finishFocus()', '  private setTaskCompleted(')}
-  ${method('  private advanceGoalMilestone(', '  private runDailyAction()')}
 } exports.H=H;`,{TaskOutcomeService:outcome,StudyDataCenter:center,GoalPlanningService:goals,
   FocusClock:load('FocusClock').FocusClock,StudyLiveViewService:{stop:()=>{liveViewStops++;}}}).H;
 // Case A: normal running focus closes once and enters the existing feedback flow.
@@ -122,12 +122,8 @@ assert.equal(stale.isRunning,false);assert.equal(stale.remainingSeconds,0);asser
 assert.equal(stale.timerStops,1);assert.equal(stale.focusRecords.length,0);assert.equal(stale.focusSessionCredited,true);
 assert.equal(liveViewStops,beforeStaleLiveStops+1);
 assert.equal(stale.tasks[0].completed,true);assert.equal(stale.tasks[0].outcome,'submitted');assert.equal(stale.opened,undefined);
-h.academicGoals=[goal];h.tasks=[{...task,completed:true},{...task,id:'t2',completed:false}];
-h.advanceGoalMilestone(h.tasks[0],true);assert.equal(h.academicGoals[0].milestones[0].completed,false);
-h.tasks[1].completed=true;h.advanceGoalMilestone(h.tasks[1],true);
-assert.equal(h.academicGoals[0].milestones[0].completed,true);assert.ok(h.tasks.some(t=>t.milestoneId==='m2'));
 console.log('PASS unified decision: budget/day rollover/course gap/resume/deferral persistence/widget parity');
-console.log('PASS results: timer is not completion; self-report is not mastery; fresh bank evidence; grouped milestones; plan preserves context');
+console.log('PASS results: timer is not completion; self-report is not mastery; fresh bank evidence; goals do not generate tasks');
 // 新主线：旧题库证据不能抢占行动，开始补学直接进入共学光场。
 const mathState={...base,profileSubject:'线性代数',tasks:[bankTask]};
 const next=action.decide(mathState,evidence.map(e=>({...e,status:'建议复习'})),now);

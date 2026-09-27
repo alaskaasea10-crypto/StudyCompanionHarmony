@@ -21,6 +21,7 @@ function load(name) {
 }
 
 const { AgentDecisionService: decisions } = load('AgentDecisionService');
+const { LearningActionService: actions } = load('LearningActionService');
 const now = new Date('2026-09-20T10:00:00+08:00').getTime();
 const task = { id: 't1', title: '整理矩阵乘法', subject: '线性代数', minutes: 25,
   completed: false, source: 'profile' };
@@ -182,7 +183,7 @@ assert.equal(expired.recommendedAction.taskId, math.id);
 const unknownTime = decisions.decide({ ...realSubjects,
   todayStudyOverride: { date: '2026-09-20' } }, now);
 assert.equal(unknownTime.dailyPlan.length, 1);
-assert.equal(load('LearningActionService').LearningActionService.freeMinutes(realSubjects, now), undefined);
+assert.equal(actions.freeMinutes(realSubjects, now), undefined);
 const ongoing = decisions.decide({ ...realSubjects, currentTaskIndex: 1, isRunning: true,
   remainingSeconds: 600, focusSegmentStartedAt: now - 1000,
   todayStudyOverride: { ...today, availableMinutes: 15, preferredTaskId: math.id } }, now);
@@ -213,12 +214,23 @@ assert.equal(delayed.dailyPlan.some(item => item.taskId === math.id), false);
 const indexSource = fs.readFileSync(path.join(root, 'entry/src/main/ets/pages/Index.ets'), 'utf8');
 const adjustMethod = indexSource.slice(indexSource.indexOf('  private adjustTodayTask('),
   indexSource.indexOf('  private recordTaskResult('));
-const adjustmentBox = { exports: {}, Date, console };
+const adjustmentBox = { exports: {}, Date, console, LearningActionService: actions };
 vm.runInNewContext(ts.transpileModule(`class AdjustmentHarness {
   tasks = []; todayStudyOverride = { date: '' }; preferredTaskId = ''; actionDeferrals = [];
   isRunning = true; focusElapsedSeconds = 30; currentTaskIndex = 0; persistCount = 0;
-  profileSubject = '线性代数'; actionClock = 0; actionMessage = '';
+  profileSubject = '线性代数'; profileDailyMinutes = 60; actionClock = 0; actionMessage = '';
+  studyDayKey = '2026-09-20'; todayMinutes = 0; focusRecords = []; quizAttempts = [];
+  remainingSeconds = 0; focusSegmentStartedAt = 0; focusSessionCredited = true;
+  energyState = '一般'; agentRequestId = 0; agentLoading = true; agentGenerated = true;
   beijingDayKey() { return '2026-09-20'; }
+  snapshot() { return {
+    tasks: this.tasks, profileDailyMinutes: this.profileDailyMinutes, studyDayKey: this.studyDayKey,
+    todayMinutes: this.todayMinutes, focusRecords: this.focusRecords, quizAttempts: this.quizAttempts,
+    isRunning: this.isRunning, focusElapsedSeconds: this.focusElapsedSeconds,
+    focusSegmentStartedAt: this.focusSegmentStartedAt, focusSessionCredited: this.focusSessionCredited,
+    remainingSeconds: this.remainingSeconds, energyState: this.energyState,
+    todayStudyOverride: this.todayStudyOverride
+  }; }
   persistSilently() { this.persistCount++; }
   ${adjustMethod}
 } exports.AdjustmentHarness = AdjustmentHarness;`, {
@@ -248,22 +260,23 @@ assert.equal(adjustment.todayStudyOverride.temporaryTaskIds[0], stableTemporaryI
 adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 60 }, '', '', 15);
 assert.equal(adjustment.tasks.length, 3);
 assert.equal(adjustment.tasks[2].id, stableTemporaryId);
-const ensureMethod = indexSource.slice(indexSource.indexOf('  private ensureGoalMilestoneTask()'),
-  indexSource.indexOf('  private advanceGoalMilestone('));
-const goalBox = { exports: {}, Date, console, GoalPlanningService: load('GoalPlanningService').GoalPlanningService };
-vm.runInNewContext(ts.transpileModule(`class GoalHarness {
-  tasks = []; academicGoals = [];
-  ${ensureMethod}
-} exports.GoalHarness = GoalHarness;`, {
-  compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS }
-}).outputText, goalBox);
-const goalHarness = new goalBox.exports.GoalHarness();
-goalHarness.academicGoals = goals.map(goal => ({ ...goal, estimatedMinutes: 120,
-  milestones: [{ id: `${goal.id}-m1`, title: '第一阶段', minutes: 30, completed: false }] }));
-goalHarness.ensureGoalMilestoneTask();
-assert.equal(goalHarness.tasks.length, 3);
-assert.equal(new Set(goalHarness.tasks.map(item => item.goalId)).size, 3);
-const goalTaskIds = JSON.stringify(goalHarness.tasks.map(item => item.id));
-goalHarness.ensureGoalMilestoneTask();
-assert.equal(JSON.stringify(goalHarness.tasks.map(item => item.id)), goalTaskIds);
+// 页面输入的是“从现在起追加的时长”；已专注60分钟后输入30，底层兼容字段保存总预算90。
+adjustment.isRunning = false;
+adjustment.todayMinutes = 0;
+adjustment.focusRecords = [
+  { dayKey: new Date(Date.now() + 8 * 3600000).toISOString().substring(0, 10), elapsedSeconds: 3600 },
+  { dayKey: '2026-09-20', elapsedSeconds: 3600 }
+];
+adjustment.focusElapsedSeconds = 0;
+adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 30,
+  preferredTaskId: englishReal.id }, '', '', 25);
+assert.equal(adjustment.todayStudyOverride.availableMinutes, 90);
+assert.equal(adjustment.todayStudyOverride.preferredTaskId, englishReal.id);
+assert.equal(actions.budget(adjustment.snapshot(), now), 30);
+assert.equal(adjustment.agentLoading, false);
+assert.equal(adjustment.agentGenerated, false);
+assert.ok(adjustment.agentRequestId > 0);
+assert.equal(indexSource.includes('ensureGoalMilestoneTask'), false);
+assert.equal(indexSource.includes('advanceGoalMilestone'), false);
+assert.equal(indexSource.includes('GoalPlanningService.taskFor'), false);
 console.log('PASS Agent decision: evidence, confirmed-time plan, budget, no mutation, state safety');

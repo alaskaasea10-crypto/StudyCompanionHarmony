@@ -13,7 +13,6 @@ export struct ScheduleImportCard {
   @Prop importMessage: string = '';
   @Prop importSource: string = '';
   @Prop draftItems: ScheduleItem[] = [];
-  onScanDocument: () => void = () => {};
   onSelectImage: () => void = () => {};
   onConfirm: () => void = () => {};
   onRetry: () => void = () => {};
@@ -109,23 +108,16 @@ export struct ScheduleImportCard {
             })
         }.width('100%')
       } else {
-        Row({ space: 12 }) {
-          Column({ space: 4 }) {
-            Text(this.setupScheduleReady ? '课表已导入' : '导入课表')
-              .width('100%').fontSize(15).fontWeight(FontWeight.Bold)
-            Text(this.importStatus === 'error' ? this.importMessage :
-              (this.setupScheduleReady ? `可重新导入${this.importSource.length > 0 ? ` · ${this.importSource}` : ''}` :
-                '选择课表截图'))
-              .width('100%').fontSize(12)
-              .fontColor(this.importStatus === 'error' ? '#D34F4F' : '#9397A9')
-          }.layoutWeight(1)
-          Button(this.setupScheduleReady ? '重新扫描' : '智能扫描')
-            .height(40).fontSize(12).fontColor(Color.White).backgroundColor('#5B5FEF')
-            .onClick(() => {
-              this.onScanDocument();
-            })
-        }.width('100%')
-        Button('直接选择课表截图')
+        Column({ space: 4 }) {
+          Text(this.setupScheduleReady ? '课表已导入' : '导入课表')
+            .width('100%').fontSize(15).fontWeight(FontWeight.Bold)
+          Text(this.importStatus === 'error' ? this.importMessage :
+            (this.setupScheduleReady ? `可重新导入${this.importSource.length > 0 ? ` · ${this.importSource}` : ''}` :
+              '选择课表截图'))
+            .width('100%').fontSize(12)
+            .fontColor(this.importStatus === 'error' ? '#D34F4F' : '#9397A9')
+        }.width('100%').alignItems(HorizontalAlign.Start)
+        Button(this.setupScheduleReady ? '重新上传课表' : '直接选择课表截图')
           .width('100%').height(36).fontSize(12).fontColor('#5B5FEF').backgroundColor('#ECEBFF')
           .onClick(() => {
             this.onSelectImage();
