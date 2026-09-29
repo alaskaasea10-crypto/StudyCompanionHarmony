@@ -11,7 +11,8 @@ export class GoalPlanningService {
     type: string = '考试'): AcademicGoal {
     const now: number = Date.now();
     const goal: AcademicGoal = { id: `goal-${now}`, title: title.trim(), type: type, subject: subject.trim(),
-      deadline: deadline.trim(), estimatedMinutes: Math.min(6000, Math.max(60, estimatedMinutes)),
+      deadline: GoalPlanningService.normalizeDeadline(deadline),
+      estimatedMinutes: Math.min(6000, Math.max(60, estimatedMinutes)),
       completed: false, createdAt: now };
     goal.milestones = GoalPlanningService.decompose(goal);
     return goal;
@@ -20,6 +21,39 @@ export class GoalPlanningService {
   private static dateKey(time: number): string {
     const date: Date = new Date(time + 8 * 60 * 60 * 1000);
     return `${date.getUTCFullYear()}-${(date.getUTCMonth() + 1).toString().padStart(2, '0')}-${date.getUTCDate().toString().padStart(2, '0')}`;
+  }
+
+  static normalizeDeadline(deadline: string): string {
+    const value: string = deadline.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) { return ''; }
+    const target: number = new Date(`${value}T00:00:00+08:00`).getTime();
+    if (!Number.isFinite(target) || GoalPlanningService.dateKey(target) !== value) { return ''; }
+    return value;
+  }
+
+  static deadlineFromDate(value: Date): string {
+    if (!Number.isFinite(value.getTime())) { return ''; }
+    const year: string = value.getFullYear().toString().padStart(4, '0');
+    const month: string = (value.getMonth() + 1).toString().padStart(2, '0');
+    const day: string = value.getDate().toString().padStart(2, '0');
+    return GoalPlanningService.normalizeDeadline(`${year}-${month}-${day}`);
+  }
+
+  static pickerDate(deadline: string, now: number = Date.now()): Date {
+    const value: string = GoalPlanningService.normalizeDeadline(deadline);
+    if (value.length > 0) {
+      const parts: string[] = value.split('-');
+      return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    }
+    const clock: Date = new Date(now + 8 * 60 * 60 * 1000);
+    return new Date(clock.getUTCFullYear(), clock.getUTCMonth(), clock.getUTCDate());
+  }
+
+  static displayDeadline(deadline: string): string {
+    const value: string = GoalPlanningService.normalizeDeadline(deadline);
+    if (value.length === 0) { return '请选择日期'; }
+    const parts: string[] = value.split('-');
+    return `${parts[0]}年${Number(parts[1])}月${Number(parts[2])}日`;
   }
 
   static decompose(goal: AcademicGoal): GoalMilestone[] {
@@ -55,7 +89,8 @@ export class GoalPlanningService {
 
   static normalize(goal: AcademicGoal): AcademicGoal {
     const normalized: AcademicGoal = { id: goal.id, title: goal.title, type: goal.type, subject: goal.subject,
-      deadline: goal.deadline, estimatedMinutes: goal.estimatedMinutes, completed: goal.completed,
+      deadline: GoalPlanningService.normalizeDeadline(goal.deadline),
+      estimatedMinutes: goal.estimatedMinutes, completed: goal.completed,
       createdAt: goal.createdAt };
     normalized.milestones = GoalPlanningService.refreshedMilestones(normalized, goal.milestones);
     return normalized;
@@ -65,17 +100,17 @@ export class GoalPlanningService {
   static update(goal: AcademicGoal, title: string, subject: string, deadline: string,
     estimatedMinutes: number): AcademicGoal {
     const updated: AcademicGoal = { id: goal.id, title: title.trim(), type: goal.type, subject: subject.trim(),
-      deadline: deadline.trim(), estimatedMinutes: Math.min(6000, Math.max(60, estimatedMinutes)),
+      deadline: GoalPlanningService.normalizeDeadline(deadline),
+      estimatedMinutes: Math.min(6000, Math.max(60, estimatedMinutes)),
       completed: goal.completed, createdAt: goal.createdAt };
     updated.milestones = GoalPlanningService.refreshedMilestones(updated, goal.milestones);
     return updated;
   }
 
   static daysUntil(deadline: string, now: number = Date.now()): number {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline)) { return 999; }
-    const target: number = new Date(`${deadline}T00:00:00+08:00`).getTime();
-    if (!Number.isFinite(target)) { return 999; }
-    if (GoalPlanningService.dateKey(target) !== deadline) { return 999; }
+    const value: string = GoalPlanningService.normalizeDeadline(deadline);
+    if (value.length === 0) { return 999; }
+    const target: number = new Date(`${value}T00:00:00+08:00`).getTime();
     const clock: Date = new Date(now + 8 * 60 * 60 * 1000);
     const today: number = new Date(`${clock.getUTCFullYear()}-${(clock.getUTCMonth() + 1).toString().padStart(2, '0')}-${clock.getUTCDate().toString().padStart(2, '0')}T00:00:00+08:00`).getTime();
     return Math.ceil((target - today) / 86400000);

@@ -14,7 +14,7 @@ function load(name) {
     return { AgentClient: { generateTodayPlan: async () => { modelCalls++; return modelResponse; } } };
   }
   if (cache.has(name)) return cache.get(name);
-  const folder = name.endsWith('Models') ? 'models' : 'services';
+  const folder = name === 'SubjectDisplayName' ? 'utils' : name.endsWith('Models') ? 'models' : 'services';
   const source = fs.readFileSync(path.join(root, folder, `${name}.ets`), 'utf8');
   const box = { exports: {}, Date, console, require: input => load(path.basename(input)) };
   vm.runInNewContext(ts.transpileModule(source, {

@@ -5,11 +5,13 @@ const assert = require('node:assert/strict');
 const ts = require(process.argv[2]);
 
 const root = path.resolve(__dirname, '..');
+const now = new Date('2026-09-27T14:00:00+08:00').getTime();
+class FeedbackClock extends Date { static now() { return now; } }
 const cache = new Map();
 function load(name) {
   if (name === 'BuildProfile') return { DEBUG: false };
   if (cache.has(name)) return cache.get(name);
-  const filename = name === 'StudyModels' ? 'models/StudyModels.ets' :
+  const filename = name === 'SubjectDisplayName' ? 'utils/SubjectDisplayName.ets' : name === 'StudyModels' ? 'models/StudyModels.ets' :
     name === 'QuestionBankModels' ? 'models/QuestionBankModels.ets' : `services/${name}.ets`;
   const source = fs.readFileSync(path.join(root, 'entry/src/main/ets', filename), 'utf8');
   const box = { exports: {}, Date, console, require: input => load(path.basename(input)) };
@@ -26,7 +28,7 @@ const decisions = load('AgentDecisionService').AgentDecisionService;
 const indexSource = fs.readFileSync(path.join(root, 'entry/src/main/ets/pages/Index.ets'), 'utf8');
 const feedbackMethods = indexSource.slice(indexSource.indexOf('  private recordTaskResult('),
   indexSource.indexOf('  private openTaskResult('));
-const harnessBox = { exports: {}, Date, console, TaskOutcomeService: outcomes };
+const harnessBox = { exports: {}, Date: FeedbackClock, console, TaskOutcomeService: outcomes };
 vm.runInNewContext(ts.transpileModule(`class FeedbackHarness {
   tasks = []; currentTaskIndex = 0; resultChecked = true; resultExperience = 'normal'; resultNote = '';
   todayStudyOverride = { date: '2026-09-27' }; preferredTaskId = ''; actionDeferrals = [];
@@ -81,7 +83,6 @@ assert.equal(restored[0].resultNote, '会了');
 const emptyCompleted = submit('').tasks[0];
 const nextTask = { id: 'next-real', title: '整理矩阵笔记', subject: 'LinearAlgebra', minutes: 30,
   completed: false, source: 'manual' };
-const now = new Date('2026-09-27T14:00:00+08:00').getTime();
 const snapshot = { profileCompleted: true, profileSubject: 'LinearAlgebra', profileDailyMinutes: 60,
   profileExamDate: '', profileExamDateConfirmed: false, energyState: '一般', studyDayKey: '2026-09-27',
   todayMinutes: 0, tasks: [emptyCompleted, nextTask], currentTaskIndex: 1, scheduleItems: [],

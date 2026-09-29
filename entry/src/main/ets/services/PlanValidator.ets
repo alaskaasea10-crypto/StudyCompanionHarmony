@@ -1,17 +1,43 @@
 import { AgentGeneratedTask, AgentPlan, AgentPlanRequest, AgentUsage } from '../models/AgentModels';
-import { StudyTask, TodayStudyOverride } from '../models/StudyModels';
+import { StudyStateSnapshot, StudyTask, TodayIntent, TodayStudyOverride } from '../models/StudyModels';
+
+import { TodayStudyOverrideService } from './TodayStudyOverrideService';
 
 export class PlanValidator {
+  // 只有客户端根据用户明确意图构造的增量可进入存储；不接受模型提供新 taskId。
+  static validateTodayCreation(snapshot: StudyStateSnapshot, intent: TodayIntent,
+    added: StudyTask[], override: TodayStudyOverride, now: number): void {
+    if (override.date !== TodayStudyOverrideService.date(now) || added.length > 4) {
+      throw new Error('今天的安排已变化，请重新确认');
+    }
+    const ids: string[] = (snapshot.tasks ?? []).map((task: StudyTask) => task.id ?? '')
+      .concat(snapshot.deletedTaskIds ?? []);
+    for (const task of added) {
+      if (!intent.subject || (intent.action !== 'execute' && intent.action !== 'strategy') ||
+        !TodayStudyOverrideService.realTask(task) || ids.includes(task.id ?? '') ||
+        !TodayStudyOverrideService.consistentSubject(task) || task.completed ||
+        task.source !== 'today-temporary' || task.createdAt === undefined ||
+        TodayStudyOverrideService.date(task.createdAt) !== override.date ||
+        TodayStudyOverrideService.subjectName(task.subject) !== TodayStudyOverrideService.subjectName(intent.subject) ||
+        !task.title.trim() || !Number.isFinite(task.minutes) || task.minutes < 5 || task.minutes > (intent.source === 'manual' ? 120 : 45) ||
+        !(override.temporaryTaskIds ?? []).includes(task.id ?? '')) {
+        throw new Error('学习任务与本次意图不一致，未保存');
+      }
+      ids.push(task.id ?? '');
+    }
+  }
+
   // 今日模型计划只可引用当前真实待办；旧的生成任务校验保留给独立补学流程。
   static validateExisting(plan: AgentPlan, request: AgentPlanRequest): AgentPlan {
     const context = request.context;
     const override: TodayStudyOverride | undefined = context.todayStudyOverride?.date === context.date ?
       context.todayStudyOverride : undefined;
     const existing: StudyTask[] = context.unfinishedTasks.filter((task: StudyTask) =>
-      task.id !== undefined && !task.completed &&
-      (task.id === context.protectedTaskId || !(override?.skippedTaskIds ?? []).includes(task.id)) &&
-      (task.id === context.protectedTaskId || (context.eligibleTaskIds ?? []).includes(task.id)) &&
-      (task.source !== 'today-temporary' || (override?.temporaryTaskIds ?? []).includes(task.id)));
+      TodayStudyOverrideService.realTask(task) && TodayStudyOverrideService.consistentSubject(task) && !task.completed &&
+      (task.id === context.protectedTaskId || TodayStudyOverrideService.matchesIntent(task, override)) &&
+      (task.id === context.protectedTaskId || !(override?.skippedTaskIds ?? []).includes(task.id ?? '')) &&
+      (task.id === context.protectedTaskId || (context.eligibleTaskIds ?? []).includes(task.id ?? '')) &&
+      (task.id === context.protectedTaskId || TodayStudyOverrideService.currentTask(task, override)));
     const raw: AgentGeneratedTask[] = plan.tasks.slice().sort((left: AgentGeneratedTask, right: AgentGeneratedTask) =>
       left.priority - right.priority);
     if (raw.length < 1 || raw.length > 4) { throw new Error('计划阶段数量不合理，请重新安排'); }
@@ -52,8 +78,14 @@ export class PlanValidator {
     if (context.protectedTaskId !== undefined && result[0].taskId !== context.protectedTaskId) {
       throw new Error('正在专注或等待反馈的任务必须先保留');
     }
+    if (!protectedStage && override?.preferredTaskId &&
+      existing.some((task: StudyTask) => task.id === override.preferredTaskId) &&
+      result[0].taskId !== override.preferredTaskId) {
+      throw new Error('计划不能覆盖用户今天明确指定的任务');
+    }
     // Model prose is not evidence: keep its valid ordering/time suggestion, but show only verifiable local wording.
-    return { summary: `今天先推进${result.length}项已有学习任务`, detectedSubject: plan.detectedSubject,
+    return { summary: result.map((task: AgentGeneratedTask, index: number) =>
+      `${index + 1}. ${task.title} · ${task.minutes}分钟`).join('\n'), detectedSubject: plan.detectedSubject,
       recommendationReasons: [], tasks: result,
       totalMinutes: total, source: plan.source, model: plan.model, usage: plan.usage,
       agentMode: plan.agentMode, toolCalls: plan.toolCalls, rounds: plan.rounds };

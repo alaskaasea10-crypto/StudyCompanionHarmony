@@ -2,6 +2,7 @@
 /oh_modules
 /local.properties
 /.idea
+/.vscode
 **/build
 /.hvigor
 .cxx
@@ -18,6 +19,11 @@ backend/__pycache__/
 backend/tests/__pycache__/
 backend/dist/
 /dist/
+
+# Logs, coverage reports, and transient outputs.
+*.log
+logs/
+coverage/
 
 # Python-generated caches and local test output.
 **/__pycache__/
@@ -43,5 +49,27 @@ htmlcov/
 /.signing/
 *.p12
 *.p7b
+*.pfx
+*.pem
+*.key
 *.jks
 *.keystore
+
+# Install packages and competition submission artifacts.
+*.hap
+*.app
+*.apk
+*.pdf
+*.ppt
+*.pptx
+*.mp4
+*.sha256
+/03-*.zip
+/StudyCompanionHarmony-*.zip
+/StudyCompanionHarmony-source.zip
+/small-planet-server-update.zip
+/small-planet-server-update/
+/small-planet-intelligence-server-update.zip
+/small-planet-intelligence-server-update/
+/FINAL_VIDEO_END_CARD.png
+/FINAL_VIDEO_END_CARD.svg

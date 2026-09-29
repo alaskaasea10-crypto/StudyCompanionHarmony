@@ -221,6 +221,242 @@ def call_emotional_support(data: dict[str, Any], config: AgentConfig, timeout: i
     return {"reply": reply, "crisis": False, "source": "openpangu", "model": config.model}
 
 
+def validate_small_planet_request(data: Any) -> dict[str, Any]:
+    """Allow only a compact, client-verified view of the current learning conversation."""
+    if not isinstance(data, dict):
+        raise AgentServiceError("请求格式不正确")
+    message = _clean_text(data.get("currentUserMessage"), 500)
+    fallback = _clean_text(data.get("deterministicFallback"), 800)
+    if not message or not fallback:
+        raise AgentServiceError("缺少当前消息或可靠兜底回复")
+    route = str(data.get("route") or "chat")[:40]
+    operation = str(data.get("operationResult") or "proposed")[:24]
+    if operation not in {"proposed", "validated", "persisted", "rejected", "failed", "read-only"}:
+        raise AgentServiceError("操作结果状态不正确")
+    history: list[dict[str, str]] = []
+    raw_history = data.get("conversationContext")
+    if isinstance(raw_history, list):
+        for item in raw_history[-8:]:
+            if not isinstance(item, dict):
+                continue
+            role = "user" if item.get("role") == "user" else "assistant"
+            content = _clean_text(item.get("text"), 500)
+            if content:
+                history.append({"role": role, "content": content})
+    active_tasks: list[dict[str, Any]] = []
+    raw_tasks = data.get("activeTasks")
+    if isinstance(raw_tasks, list):
+        for task in raw_tasks[:12]:
+            if not isinstance(task, dict):
+                continue
+            task_id = _clean_text(task.get("taskId"), 96)
+            title = _clean_text(task.get("title"), 80)
+            if task_id and title:
+                active_tasks.append({
+                    "taskId": task_id,
+                    "title": title,
+                    "canonicalSubject": _clean_text(task.get("canonicalSubject"), 32),
+                    "displaySubject": _clean_text(task.get("displaySubject"), 32),
+                    "minutes": min(240, max(0, _as_int(task.get("minutes"), 0))),
+                    "state": _clean_text(task.get("state"), 24),
+                })
+    plan: list[dict[str, Any]] = []
+    raw_plan = data.get("dailyPlan")
+    if isinstance(raw_plan, list):
+        for item in raw_plan[:4]:
+            if not isinstance(item, dict):
+                continue
+            task_id = _clean_text(item.get("taskId"), 96)
+            if task_id:
+                plan.append({
+                    "taskId": task_id,
+                    "title": _clean_text(item.get("title"), 80),
+                    "displaySubject": _clean_text(item.get("displaySubject"), 32),
+                    "minutes": min(240, max(0, _as_int(item.get("minutes"), 0))),
+                })
+    raw_recommended = data.get("recommendedAction")
+    recommended = None
+    if isinstance(raw_recommended, dict) and _clean_text(raw_recommended.get("taskId"), 96):
+        recommended = {
+            "taskId": _clean_text(raw_recommended.get("taskId"), 96),
+            "title": _clean_text(raw_recommended.get("title"), 80),
+            "displaySubject": _clean_text(raw_recommended.get("displaySubject"), 32),
+            "minutes": min(240, max(0, _as_int(raw_recommended.get("minutes"), 0))),
+        }
+    raw_override = data.get("todayStudyOverride")
+    override = None
+    if isinstance(raw_override, dict):
+        raw_intent = raw_override.get("intent") if isinstance(raw_override.get("intent"), dict) else {}
+        raw_skipped = raw_override.get("skippedTaskIds")
+        raw_skipped = raw_skipped if isinstance(raw_skipped, list) else []
+        override = {
+            "date": _clean_text(raw_override.get("date"), 16),
+            "intent": {
+                "subject": _clean_text(raw_intent.get("subject"), 32),
+                "topic": _clean_text(raw_intent.get("topic"), 64),
+                "activity": _clean_text(raw_intent.get("activity"), 24),
+                "requestedMinutes": min(240, max(0, _as_int(raw_intent.get("requestedMinutes"), 0))),
+                "minutesKind": _clean_text(raw_intent.get("minutesKind"), 16),
+            },
+            "preferredTaskId": _clean_text(raw_override.get("preferredTaskId"), 96),
+            "preferredSubject": _clean_text(raw_override.get("preferredSubject"), 32),
+            "skippedTaskIds": [_clean_text(item, 96) for item in raw_skipped[:20]],
+        }
+    remaining = data.get("remainingMinutes")
+    if remaining is not None:
+        remaining = min(240, max(0, _as_int(remaining, 0)))
+    goals: list[dict[str, str]] = []
+    raw_goals = data.get("academicGoals")
+    if isinstance(raw_goals, list):
+        for goal in raw_goals[:8]:
+            if not isinstance(goal, dict):
+                continue
+            goal_id = _clean_text(goal.get("goalId"), 96)
+            title = _clean_text(goal.get("title"), 80)
+            if goal_id and title:
+                goals.append({"goalId": goal_id, "title": title,
+                              "subject": _clean_text(goal.get("subject"), 32),
+                              "deadline": _clean_text(goal.get("deadline"), 16)})
+    mentioned_subjects: list[str] = []
+    raw_subjects = data.get("mentionedSubjects")
+    if isinstance(raw_subjects, list):
+        for item in raw_subjects[:6]:
+            subject = _clean_text(item, 32)
+            if subject and subject not in mentioned_subjects:
+                mentioned_subjects.append(subject)
+    return {
+        "messageId": _clean_text(data.get("messageId"), 96),
+        "route": route,
+        "currentUserMessage": message,
+        "conversationContext": history,
+        "operationResult": operation,
+        "persisted": bool(data.get("persisted")),
+        "canonicalSubject": _clean_text(data.get("canonicalSubject"), 32),
+        "remainingMinutes": remaining,
+        "todayStudyOverride": override,
+        "activeTasks": active_tasks,
+        "academicGoals": goals,
+        "mentionedSubjects": mentioned_subjects,
+        "understandingRequested": bool(data.get("understandingRequested")),
+        "recommendedAction": recommended,
+        "dailyPlan": plan,
+        "currentFocusTaskId": _clean_text(data.get("currentFocusTaskId"), 96),
+        "pendingFeedbackTaskId": _clean_text(data.get("pendingFeedbackTaskId"), 96),
+        "confirmedScheduleSummary": _clean_text(data.get("confirmedScheduleSummary"), 160),
+        "deterministicFallback": fallback,
+    }
+
+
+def build_small_planet_messages(data: dict[str, Any]) -> list[dict[str, str]]:
+    system = """你是大学生学习应用里的“小星球”学习助手。请基于客户端已经校验的事实，生成自然、简洁的中文回复。
+规则：
+1. 客户端事实是唯一真相，不改写 taskId、任务标题、科目、时长或状态，不编造考试、课表、掌握度、效率；
+2. operationResult=persisted 且 persisted=true 时才可以说安排已经保存；proposed 只能说这是建议；rejected/failed 不得声称成功；
+3. ongoing focus 或 pending feedback 存在时，先说明当前闭环受保护，新选择会在结束后生效；
+4. 普通聊天可以自然回应，但不得自行创建任务或修改安排；
+5. 回复2-4句、尽量不超过160字，不输出 taskId、JSON、技术术语或 Markdown；
+6. 结合最近会话理解省略表达，但不得把自然语言中的困难、情绪或原因拼进任务标题；
+7. understandingRequested=false 时只输出 JSON：{\"assistantReply\":\"回复内容\"}；
+8. understandingRequested=true 时输出 assistantReply 和 understanding。复杂建议只是 proposal，不能声称已保存；
+9. understanding schema：{\"mode\":\"advice|explain|clarify\",\"intent\":\"简短意图\",\"executionRequested\":false,\"subjects\":[{\"subject\":\"已验证规范科目\",\"reason\":\"真实原因\"}],\"timeBudgetMinutes\":整数或null,\"needsExplanation\":true,\"confirmationRequired\":true,\"allocation\":[{\"taskId\":\"只能引用activeTasks\",\"minutes\":整数}]}；
+10. 多目标权衡可以给 allocation，但必须 confirmationRequired=true；信息不足时澄清，不编数据；
+11. 解释当前推荐时只说明真实参与决策的 override、任务状态与当前计划；目标日期可作为新建议背景，但不得谎称它已改变本地排序。"""
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+    messages.extend(data["conversationContext"])
+    facts = {key: data.get(key) for key in (
+        "route", "operationResult", "persisted", "canonicalSubject", "remainingMinutes", "todayStudyOverride",
+        "activeTasks", "academicGoals", "mentionedSubjects", "understandingRequested",
+        "recommendedAction", "dailyPlan", "currentFocusTaskId",
+        "pendingFeedbackTaskId", "confirmedScheduleSummary", "deterministicFallback"
+    )}
+    messages.append({"role": "user", "content": "当前用户消息：" + data["currentUserMessage"] +
+        "\n已验证事实：" + json.dumps(facts, ensure_ascii=False, separators=(",", ":"))})
+    return messages
+
+
+def call_small_planet_reply(
+    data: dict[str, Any], config: AgentConfig, timeout: int = 30, *, transport: ChatTransport | None = None,
+) -> dict[str, Any]:
+    if not config.api_key:
+        raise AgentServiceError("本机尚未配置 OPENPANGU_API_KEY")
+    request_transport = transport or _request_chat_completion
+    payload = {
+        "model": config.model,
+        "messages": build_small_planet_messages(data),
+        "temperature": 0.45,
+        "max_tokens": 520 if data.get("understandingRequested") else 260,
+        "thinking": {"type": "disabled"},
+        "response_format": {"type": "json_object"},
+        "stream": False,
+    }
+    response_data = request_transport(payload, config, timeout)
+    try:
+        content = response_data["choices"][0]["message"]["content"]
+        parsed = parse_json_object(content)
+        reply = _clean_text(parsed.get("assistantReply"), 500)
+    except (KeyError, IndexError, TypeError) as error:
+        raise AgentServiceError("openPangu 返回了无法识别的回复") from error
+    if not reply:
+        raise AgentServiceError("openPangu 没有生成有效回复")
+    if not data["persisted"] and re.search(r"(已经|已|帮你).{0,10}(保存|安排好|加入今天|改好)", reply):
+        raise AgentServiceError("模型错误声称未保存的安排已经生效")
+    result: dict[str, Any] = {"reply": reply, "source": "openpangu", "model": config.model}
+    if data.get("understandingRequested"):
+        result["understanding"] = validate_small_planet_understanding(parsed.get("understanding"), data)
+    return result
+
+
+def validate_small_planet_understanding(value: Any, data: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise AgentServiceError("openPangu 没有返回结构化理解结果")
+    mode = str(value.get("mode") or "")
+    if mode not in {"advice", "explain", "clarify"} or bool(value.get("executionRequested")):
+        raise AgentServiceError("复杂对话不能直接获得数据执行权")
+    allowed_subjects = set(data.get("mentionedSubjects") or [])
+    allowed_subjects.update(task.get("canonicalSubject") or task.get("displaySubject") or ""
+                            for task in data.get("activeTasks", []))
+    allowed_subjects.update(goal.get("subject") or "" for goal in data.get("academicGoals", []))
+    allowed_subjects.discard("")
+    subjects: list[dict[str, str]] = []
+    raw_subjects = value.get("subjects")
+    if isinstance(raw_subjects, list):
+        for item in raw_subjects[:4]:
+            if not isinstance(item, dict):
+                continue
+            subject = _clean_text(item.get("subject"), 32)
+            if subject not in allowed_subjects:
+                raise AgentServiceError("模型建议引用了未经验证的科目")
+            if subject not in [entry["subject"] for entry in subjects]:
+                subjects.append({"subject": subject, "reason": _clean_text(item.get("reason"), 80)})
+    task_by_id = {task["taskId"]: task for task in data.get("activeTasks", [])}
+    allocation: list[dict[str, Any]] = []
+    total = 0
+    raw_allocation = value.get("allocation")
+    if isinstance(raw_allocation, list):
+        for item in raw_allocation[:4]:
+            if not isinstance(item, dict):
+                continue
+            task_id = _clean_text(item.get("taskId"), 96)
+            task = task_by_id.get(task_id)
+            minutes = _as_int(item.get("minutes"), 0)
+            if task is None or task_id in [entry["taskId"] for entry in allocation] or \
+                    minutes < 5 or minutes > min(45, _as_int(task.get("minutes"), 0)):
+                raise AgentServiceError("模型建议引用了无效任务或时长")
+            allocation.append({"taskId": task_id, "minutes": minutes})
+            total += minutes
+    raw_budget = value.get("timeBudgetMinutes")
+    budget = None if raw_budget is None else _as_int(raw_budget, 0)
+    if budget is not None and (budget < 5 or budget > 240 or total > budget):
+        raise AgentServiceError("模型建议超出用户表达的时间范围")
+    confirmation = bool(value.get("confirmationRequired"))
+    if allocation and not confirmation:
+        raise AgentServiceError("复杂建议必须等待用户确认")
+    return {"mode": mode, "intent": _clean_text(value.get("intent"), 64),
+            "executionRequested": False, "subjects": subjects, "timeBudgetMinutes": budget,
+            "needsExplanation": bool(value.get("needsExplanation")),
+            "confirmationRequired": confirmation, "allocation": allocation}
+
+
 ChatTransport = Callable[[dict[str, Any], AgentConfig, int], dict[str, Any]]
 
 

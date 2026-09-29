@@ -6,6 +6,7 @@ import { formatSubjectName } from '../utils/SubjectDisplayName';
 import { ScheduleItemEditor } from '../components/ScheduleItemEditor';
 import { ScheduleEditingService } from '../services/ScheduleEditingService';
 import { GoalPlanningService } from '../services/GoalPlanningService';
+import { GoalDatePickerField } from '../components/GoalDatePickerField';
 
 @Component
 export struct PlanPageView {
@@ -120,7 +121,7 @@ export struct PlanPageView {
   private async saveGoalEdit(): Promise<void> {
     const minutes: number = Number(this.editGoalMinutes.trim());
     if (this.editGoalTitle.trim().length === 0 || this.editGoalSubject.trim().length === 0 ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(this.editGoalDeadline.trim()) ||
+      GoalPlanningService.normalizeDeadline(this.editGoalDeadline).length === 0 ||
       !/^\d+$/.test(this.editGoalMinutes.trim()) || minutes < 60 || minutes > 6000) {
       this.goalEditError = '请填写目标名称、学科、有效日期和 60—6000 分钟投入。';
       return;
@@ -229,9 +230,12 @@ export struct PlanPageView {
                   .backgroundColor(Color.White).borderRadius(11)
                   .onChange((value: string) => { this.editGoalSubject = value; })
                 Row({ space: 8 }) {
-                  TextInput({ text: this.editGoalDeadline, placeholder: '截止日期 YYYY-MM-DD' })
-                    .layoutWeight(1).height(42).backgroundColor(Color.White).borderRadius(11)
-                    .onChange((value: string) => { this.editGoalDeadline = value; })
+                  GoalDatePickerField({
+                    value: this.editGoalDeadline,
+                    fieldHeight: 42,
+                    fieldBackgroundColor: Color.White,
+                    onConfirm: (value: string) => { this.editGoalDeadline = value; }
+                  }).layoutWeight(1)
                   TextInput({ text: this.editGoalMinutes, placeholder: '总分钟' }).width(112).height(42)
                     .backgroundColor(Color.White).borderRadius(11)
                     .onChange((value: string) => { this.editGoalMinutes = value; })
@@ -258,9 +262,12 @@ export struct PlanPageView {
           Row({ space: 8 }) {
             TextInput({ placeholder: '课程名称', text: this.newGoalSubject }).layoutWeight(1).height(43)
               .backgroundColor('#F6F7FC').onChange((value: string) => { this.onGoalFieldChange('subject', value); })
-            TextInput({ placeholder: '截止日期 YYYY-MM-DD', text: this.newGoalDeadline }).layoutWeight(1).height(43)
-              .backgroundColor('#F6F7FC').onChange((value: string) => { this.onGoalFieldChange('deadline', value); })
           }.width('100%')
+          GoalDatePickerField({
+            value: this.newGoalDeadline,
+            fieldHeight: 43,
+            onConfirm: (value: string) => { this.onGoalFieldChange('deadline', value); }
+          })
           TextInput({ placeholder: '预计总投入（分钟，60—6000）', text: this.newGoalEstimatedMinutes })
             .height(43).backgroundColor('#F6F7FC')
             .onChange((value: string) => { this.onGoalFieldChange('minutes', value); })

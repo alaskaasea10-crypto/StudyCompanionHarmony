@@ -28,12 +28,14 @@ const plan = [{ order: 1, taskId: 'private-task-id', subject: '大学英语',
 const release = load(false);
 release.StudyDecisionDebug.decision(action, plan);
 release.StudyDecisionDebug.event('focus-started', action.taskId, action.subject, action.headline, 'minutes=25');
+release.StudyDecisionDebug.candidates([action.taskId]);
 assert.equal(release.messages.length, 0, 'release must not log task ids, titles, subjects or decision details');
 
 const debug = load(true);
 debug.StudyDecisionDebug.decision(action, plan);
 debug.StudyDecisionDebug.event('focus-started', action.taskId, action.subject, action.headline, 'minutes=25');
-assert.equal(debug.messages.length, 2, 'debug builds keep the existing structured diagnostics');
+debug.StudyDecisionDebug.candidates([action.taskId]);
+assert.equal(debug.messages.length, 3, 'debug builds keep the existing structured diagnostics');
 assert.ok(debug.messages.every(message => message.startsWith('[StudyDecisionDebug]')));
 
 assert.ok(source.includes("import { DEBUG } from 'BuildProfile';"));

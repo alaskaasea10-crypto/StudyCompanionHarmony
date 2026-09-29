@@ -35,6 +35,7 @@ import {
   StudyMetrics,
   StudyStateSnapshot,
   StudyTask,
+  TodayIntent,
   TodayStudyOverride
 } from '../models/StudyModels';
 import { AcademicGoal } from '../models/StudyModels';
@@ -48,7 +49,14 @@ import {
   PlanCommitResult,
   PlanningDecision,
   QuizFeedbackResult,
-  QuizQuestion
+  QuizQuestion,
+  SmallPlanetConversationFact,
+  SmallPlanetGoalFact,
+  SmallPlanetPlanFact,
+  SmallPlanetReplyRequest,
+  SmallPlanetReplyResponse,
+  SmallPlanetUnderstanding,
+  SmallPlanetTaskFact
 } from '../models/AgentModels';
 import { EmotionalSupportMessage } from '../models/EmotionalSupportModels';
 import { EmotionalSupportClient } from '../services/EmotionalSupportClient';
@@ -59,7 +67,6 @@ import { LearningFeedbackService } from '../services/LearningFeedbackService';
 import { LearningPlanningOrchestrator } from '../services/LearningPlanningOrchestrator';
 import { PlanCommitService } from '../services/PlanCommitService';
 import { PlanValidator } from '../services/PlanValidator';
-import { RecommendationResult, RecommendationService } from '../services/RecommendationService';
 import { StudyDataCenter } from '../services/StudyDataCenter';
 import { StudyRepository } from '../services/StudyRepository';
 import { ProfileCompletionService } from '../services/ProfileCompletionService';
@@ -75,8 +82,12 @@ import { SquadService } from '../services/SquadService';
 import { DailyAction, DailyActionService } from '../services/DailyActionService';
 import { LearningActionService } from '../services/LearningActionService';
 import { TodayStudyOverrideService } from '../services/TodayStudyOverrideService';
+import { TodayIntentService, TodayIntentResolution } from '../services/TodayIntentService';
 import { StudyTaskDeletionResult, StudyTaskDeletionService } from '../services/StudyTaskDeletionService';
 import { StudyDecisionDebug } from '../services/StudyDecisionDebug';
+import { SmallPlanetClient } from '../services/SmallPlanetClient';
+import { SmallPlanetConversationRouter, SmallPlanetRouteDecision } from '../services/SmallPlanetConversationRouter';
+import { SmallPlanetSemanticValidator } from '../services/SmallPlanetSemanticValidator';
 import { AgentDecisionResult, AgentDecisionService } from '../services/AgentDecisionService';
 import { TaskOutcomeService } from '../services/TaskOutcomeService';
 import { ActionDeferral } from '../models/StudyModels';
@@ -169,9 +180,9 @@ export struct Index {
   @State showRecommendationDetails: boolean = false;
   @State squadMessage: string = '小队成员正在安静共学，送出微光不会打断对方';
   @State squadMembers: SquadMember[] = createDefaultSquadMembers('小林');
-  @State squadInviteCode: string = '';
-  @State squadJoined: boolean = false;
-  @State squadName: string = '';
+  @State squadInviteCode: string = 'LIGHT-DEMO';
+  @State squadJoined: boolean = true;
+  @State squadName: string = '同航学习小队';
   @State squadChallengeTitle: string = '';
   @State squadChallengeMinutes: number = 25;
   @State squadChallengeJoinedCount: number = 0;
@@ -187,6 +198,10 @@ export struct Index {
   @State avatarStatus: string = '头像仅保存在本机';
   @State actionDeferrals: ActionDeferral[] = [];
   @State preferredTaskId: string = '';
+  private todayIntentUndo: TodayStudyOverride[] = [];
+  private todayStrategyText: string = '';
+  private pendingSmallPlanetProposal?: SmallPlanetUnderstanding;
+  private todayCommitSettlement: Promise<void> = Promise.resolve();
   @State todayStudyOverride: TodayStudyOverride = { date: '' };
   @State deletedTaskIds: string[] = [];
   @State actionClock: number = Date.now();
@@ -393,9 +408,10 @@ export struct Index {
     this.profileMajor = snapshot.profileMajor?.trim().length > 0 ? snapshot.profileMajor : '计算机科学与技术';
     this.profileGoal = snapshot.profileGoal?.trim().length > 0 ? snapshot.profileGoal : '期末复习';
     this.profileSubject = snapshot.profileSubject?.trim().length > 0 ? snapshot.profileSubject : '线性代数';
-    this.profileExamDate = snapshot.profileExamDate?.trim().length > 0 ? snapshot.profileExamDate : this.futureDate(14);
+    const restoredProfileDeadline: string = GoalPlanningService.normalizeDeadline(snapshot.profileExamDate ?? '');
+    this.profileExamDate = restoredProfileDeadline.length > 0 ? restoredProfileDeadline : this.futureDate(14);
     this.profileExamDateConfirmed = snapshot.profileExamDateConfirmed === true &&
-      snapshot.profileExamDate?.trim().length > 0;
+      restoredProfileDeadline.length > 0;
     this.profileDailyMinutes = Math.min(300, Math.max(15, snapshot.profileDailyMinutes ?? 60));
     this.profilePreferredTime = snapshot.profilePreferredTime?.trim().length > 0 ? snapshot.profilePreferredTime : '晚间';
     this.profileLearningStyle = snapshot.profileLearningStyle?.trim().length > 0 ? snapshot.profileLearningStyle : '练习驱动';
@@ -419,7 +435,8 @@ export struct Index {
       return updated;
     });
     const storedSchedule: ScheduleItem[] = Array.isArray(snapshot.scheduleItems) ? snapshot.scheduleItems : [];
-    this.scheduleItems = storedSchedule.length > 0 ? storedSchedule : createDemoSchedule();
+    // 已保存的空数组也是用户真实状态，不能在重启时重新注入演示课表。
+    this.scheduleItems = Array.isArray(snapshot.scheduleItems) ? storedSchedule : createDemoSchedule();
     const restoredGoals: AcademicGoal[] = Array.isArray(snapshot.academicGoals) ? snapshot.academicGoals : [];
     this.academicGoals = restoredGoals.length > 0 ? restoredGoals.map((goal: AcademicGoal) => GoalPlanningService.normalize(goal)) :
       [GoalPlanningService.create(`${this.profileSubject}考试`, this.profileSubject,
@@ -453,10 +470,10 @@ export struct Index {
     this.squadMessage = snapshot.squadMessage ?? '小队成员正在安静共学，送出微光不会打断对方';
     const storedSquadMembers: SquadMember[] = Array.isArray(snapshot.squadMembers) ? snapshot.squadMembers : [];
     this.squadMembers = SquadService.normalizeMembers(storedSquadMembers, this.profileName);
-    this.squadInviteCode = snapshot.squadInviteCode ?? '';
-    // 旧版本生成过口令时，视为已经进入过本机小队体验，避免升级后丢失原状态。
-    this.squadJoined = snapshot.squadJoined === true ||
-      (snapshot.squadJoined === undefined && this.squadInviteCode.trim().length > 0);
+    // 新安装和旧版本未保存小队状态时，默认展示本机体验小队。
+    // 只要 snapshot 明确记录了 true/false，就始终以用户已有选择为准。
+    this.squadJoined = snapshot.squadJoined === undefined ? true : snapshot.squadJoined === true;
+    this.squadInviteCode = snapshot.squadInviteCode ?? (this.squadJoined ? 'LIGHT-DEMO' : '');
     const storedSquadName: string = snapshot.squadName ?? '';
     this.squadName = storedSquadName.trim().length > 0 ? storedSquadName :
       (this.squadJoined ? '同航学习小队' : '');
@@ -540,19 +557,22 @@ export struct Index {
     };
   }
 
-  private async persistState(): Promise<void> {
+  private async persistState(todayCommit: boolean = false): Promise<void> {
+    // 专注计时等并发保存必须等本次安排提交/回退完成，避免失败增量被另一笔保存带入磁盘。
+    if (!todayCommit) { await this.todayCommitSettlement; }
     this.actionClock = Date.now();
     const value: StudyStateSnapshot = this.snapshot();
     const pending: Promise<void> = this.persistenceQueue.catch(() => {}).then(async (): Promise<void> => {
       await this.ensureProfileStore();
-      if (this.repository !== undefined) {
-        await this.repository.saveChecked(value);
+      if (this.repository === undefined) { throw new Error('学习记录暂时无法保存'); }
+      await this.repository.saveChecked(value);
+      try {
         if (!this.detached) {
           await ActiveReminderService.cancelActive();
           const hostContext = this.getUIContext().getHostContext();
           if (hostContext !== undefined) { await StudyWidgetService.updateAll(hostContext, value); }
         }
-      }
+      } catch (error) { console.warn('Study state saved; companion surface refresh deferred'); }
     });
     this.persistenceQueue = pending;
     await pending;
@@ -580,7 +600,8 @@ export struct Index {
       this.profileMajor = await store.get('major', '计算机科学与技术') as string;
       this.profileGoal = await store.get('goal', '期末复习') as string;
       this.profileSubject = await store.get('subject', '线性代数') as string;
-      this.profileExamDate = await store.get('examDate', defaultExamDate) as string;
+      const legacyExamDate: string = await store.get('examDate', defaultExamDate) as string;
+      this.profileExamDate = GoalPlanningService.normalizeDeadline(legacyExamDate) || defaultExamDate;
       // 旧偏好未记录日期由谁填写；确认前不作为 AI 决策证据。
       this.profileExamDateConfirmed = false;
       this.profileDailyMinutes = await store.get('dailyMinutes', 60) as number;
@@ -785,14 +806,15 @@ export struct Index {
   }
 
   private async saveProfile(): Promise<void> {
+    const normalizedDeadline: string = GoalPlanningService.normalizeDeadline(this.profileExamDate);
     if (this.profileName.trim().length === 0 || this.profileMajor.trim().length === 0 ||
-      this.profileSubject.trim().length === 0 || this.profileExamDate.trim().length === 0) {
+      this.profileSubject.trim().length === 0 || normalizedDeadline.length === 0) {
       return;
     }
     this.profileName = this.profileName.trim();
     this.profileMajor = this.profileMajor.trim();
     this.profileSubject = this.profileSubject.trim();
-    this.profileExamDate = this.profileExamDate.trim();
+    this.profileExamDate = normalizedDeadline;
     this.squadMembers = SquadService.normalizeMembers(this.squadMembers, this.profileName);
     this.syncProfileToAcademicGoal();
     this.profileCompleted = true;
@@ -894,7 +916,7 @@ export struct Index {
     try {
       const result: ScheduleImportResult = await ScheduleImportClient.selectAndRecognize();
       this.scheduleDraftItems = result.scheduleItems;
-      this.scheduleImportSource = result.source === 'core-vision' ? '华为 Core Vision' : '本机 Vision 备用识别';
+      this.scheduleImportSource = result.source === 'core-vision' ? '华为 Core Vision' : '云端备用识别';
       this.scheduleImportMessage = `已识别 ${result.scheduleItems.length} 门课程`;
       this.scheduleImportStatus = 'reviewing';
     } catch (error) {
@@ -1095,20 +1117,6 @@ export struct Index {
     return '晚上好';
   }
 
-  private recommendation(): RecommendationResult {
-    return RecommendationService.recommend({
-      goal: this.profileGoal,
-      learningStyle: this.profileLearningStyle,
-      energyState: this.energyState,
-      subject: this.profileSubject,
-      examDays: this.examDays(),
-      scheduleReady: this.setupScheduleReady,
-      scheduleItems: this.scheduleItems,
-      tasks: this.tasks,
-      now: Date.now()
-    });
-  }
-
   private dailyAction(): DailyAction {
     return this.agentDecision().recommendedAction;
   }
@@ -1132,7 +1140,7 @@ export struct Index {
         this.todayStudyOverride : { date: this.beijingDayKey() };
       const taskId: string = action.key.substring(5);
       this.todayStudyOverride = { date: active.date, availableMinutes: active.availableMinutes,
-        preferredTaskId: active.preferredTaskId, preferredSubject: active.preferredSubject,
+        preferredTaskId: active.preferredTaskId, preferredSubject: active.preferredSubject, intent: active.intent,
         temporaryTaskIds: active.temporaryTaskIds,
         skippedTaskIds: Array.from(new Set((active.skippedTaskIds ?? []).concat([taskId]))) };
     }
@@ -1152,14 +1160,16 @@ export struct Index {
         availableMinutes: this.todayStudyOverride.availableMinutes,
         preferredTaskId: this.todayStudyOverride.preferredTaskId,
         preferredSubject: this.todayStudyOverride.preferredSubject,
+        intent: this.todayStudyOverride.intent,
         temporaryTaskIds: this.todayStudyOverride.temporaryTaskIds, skippedTaskIds: [] };
     }
     this.actionMessage = '';
     this.persistSilently();
   }
 
-  private adjustTodayTask(override: TodayStudyOverride, temporaryTitle: string, temporarySubject: string,
-    temporaryMinutes: number): void {
+  private async adjustTodayTask(override: TodayStudyOverride, temporaryTitle: string, temporarySubject: string,
+    temporaryMinutes: number): Promise<void> {
+    if (this.agentCommitBusy) { return; }
     const date: string = this.beijingDayKey();
     if (override.date !== date) { return; }
     const previous: TodayStudyOverride = this.todayStudyOverride.date === date ? this.todayStudyOverride : { date: date };
@@ -1171,37 +1181,59 @@ export struct Index {
     if (!this.tasks.some((task: StudyTask) => task.id === preferredId && !task.completed)) { preferredId = ''; }
     if (skippedIds.includes(preferredId)) { preferredId = ''; }
     const temporaryIds: string[] = (previous.temporaryTaskIds ?? []).slice();
+    const added: StudyTask[] = [];
     const title: string = temporaryTitle.trim();
     if (title.length > 0) {
       const now: number = Date.now();
       const id: string = `today-${now}-${this.tasks.length}`;
-      const task: StudyTask = { id: id, title: title, subject: temporarySubject.trim() || this.profileSubject,
+      const task: StudyTask = { id: id, title: title, subject: TodayStudyOverrideService.subjectName(temporarySubject.trim() || this.profileSubject),
         minutes: Math.min(120, Math.max(5, temporaryMinutes)), completed: false,
         source: 'today-temporary', createdAt: now, completedAt: 0 };
-      this.tasks = this.tasks.concat([task]);
-      temporaryIds.push(id);
-      preferredId = id;
+      if (!TodayStudyOverrideService.consistentSubject(task)) {
+        this.actionMessage = '任务名称中的科目与所选科目不同，请确认后再保存'; return;
+      }
+      const existing: StudyTask | undefined = this.tasks.find((item: StudyTask) => !item.completed &&
+        item.title === task.title && TodayStudyOverrideService.subjectName(item.subject) === task.subject &&
+        TodayStudyOverrideService.eligibleTask(item, previous));
+      if (existing !== undefined) { preferredId = existing.id ?? ''; }
+      else { added.push(task); temporaryIds.push(id); preferredId = id; }
     }
-    this.todayStudyOverride = { date: date, availableMinutes: available,
-      preferredTaskId: preferredId, preferredSubject: override.preferredSubject?.trim() ?? '',
+    const selected: StudyTask | undefined = this.tasks.concat(added).find((task: StudyTask) => task.id === preferredId);
+    const subject: string = TodayStudyOverrideService.subjectName(selected?.subject ?? override.preferredSubject ?? '');
+    const next: TodayStudyOverride = { date: date, availableMinutes: available,
+      preferredTaskId: preferredId, preferredSubject: subject,
+      intent: previous.intent?.source === 'user-chat' ? previous.intent :
+        subject ? { subject: subject, taskId: preferredId || undefined, action: 'execute', scope: 'today', source: 'manual' } : undefined,
       skippedTaskIds: skippedIds, temporaryTaskIds: temporaryIds };
-    this.preferredTaskId = preferredId;
-    this.actionDeferrals = this.actionDeferrals.filter((item: ActionDeferral) => item.kind !== 'skip' ||
+    if (previous.intent?.source === 'user-chat' && previous.intent.subject) {
+      next.preferredSubject = previous.intent.subject;
+      next.preferredTaskId = skippedIds.includes(previous.preferredTaskId ?? '') ? '' : previous.preferredTaskId;
+    }
+    this.agentCommitBusy = true;
+    let nextDeferrals: ActionDeferral[] = this.actionDeferrals.filter((item: ActionDeferral) => item.kind !== 'skip' ||
       !item.key.startsWith('task:') || skippedIds.includes(item.key.substring(5)));
     if (preferredId.length > 0) {
-      this.actionDeferrals = this.actionDeferrals.filter((item: ActionDeferral) => item.key !== `task:${preferredId}`);
+      nextDeferrals = nextDeferrals.filter((item: ActionDeferral) => item.key !== `task:${preferredId}`);
     }
     this.actionClock = Date.now();
     this.agentRequestId++;
     this.agentLoading = false;
     this.agentGenerated = false;
-    this.actionMessage = '今天的安排已更新；正在进行的专注不会被打断';
+    try {
+      await this.commitTodayConversation(next, previous, added, { subject: added[0]?.subject ?? subject,
+        action: 'execute', scope: 'today', source: 'manual' }, nextDeferrals);
+      this.actionMessage = previous.intent?.source === 'user-chat' && previous.intent.subject &&
+        (preferredId !== (next.preferredTaskId ?? '') || (subject && subject !== previous.intent.subject)) ?
+        `今天的时间已更新；仍保留聊天中明确选择的${previous.intent.subject}，想换科可告诉小星球` :
+        '今天的安排已更新；正在进行的专注不会被打断';
+    } catch (error) {
+      this.actionMessage = '今天安排没有保存成功，请重试';
+    } finally { this.agentCommitBusy = false; }
     if (typeof StudyDecisionDebug !== 'undefined') {
       const adjustedTask: StudyTask | undefined = this.tasks.find((task: StudyTask) => task.id === preferredId);
       StudyDecisionDebug.event('today-override-updated', preferredId, adjustedTask?.subject ?? '',
         adjustedTask?.title ?? '', available === undefined ? 'availableMinutes=unknown' : `availableMinutes=${available}`);
     }
-    this.persistSilently();
   }
 
   private async deleteTodayTask(taskId: string): Promise<string> {
@@ -1259,6 +1291,7 @@ export struct Index {
     if (updated.completed && updated.id === this.todayStudyOverride.preferredTaskId) {
       this.todayStudyOverride = { date: this.todayStudyOverride.date,
         availableMinutes: this.todayStudyOverride.availableMinutes, preferredTaskId: '',
+        intent: this.todayStudyOverride.intent,
         preferredSubject: this.todayStudyOverride.preferredSubject,
         skippedTaskIds: this.todayStudyOverride.skippedTaskIds,
         temporaryTaskIds: this.todayStudyOverride.temporaryTaskIds };
@@ -1324,7 +1357,7 @@ export struct Index {
   private addAcademicGoal(): void {
     const title: string = this.newGoalTitle.trim();
     const subject: string = this.newGoalSubject.trim();
-    const deadline: string = this.newGoalDeadline.trim();
+    const deadline: string = GoalPlanningService.normalizeDeadline(this.newGoalDeadline);
     const estimatedText: string = this.newGoalEstimatedMinutes.trim();
     const estimated: number = Number(estimatedText);
     if (title.length === 0 || subject.length === 0 || GoalPlanningService.daysUntil(deadline) === 999 ||
@@ -1337,8 +1370,9 @@ export struct Index {
 
   private async updateAcademicGoal(id: string, title: string, subject: string, deadline: string,
     estimatedMinutes: number): Promise<boolean> {
+    const normalizedDeadline: string = GoalPlanningService.normalizeDeadline(deadline);
     if (title.trim().length === 0 || subject.trim().length === 0 ||
-      GoalPlanningService.daysUntil(deadline.trim()) === 999 || estimatedMinutes < 60 || estimatedMinutes > 6000) {
+      normalizedDeadline.length === 0 || estimatedMinutes < 60 || estimatedMinutes > 6000) {
       return false;
     }
     const previous: AcademicGoal[] = this.academicGoals;
@@ -1346,7 +1380,7 @@ export struct Index {
     this.academicGoals = this.academicGoals.map((goal: AcademicGoal): AcademicGoal => {
       if (goal.id !== id) { return goal; }
       found = true;
-      return GoalPlanningService.update(goal, title, subject, deadline, estimatedMinutes);
+      return GoalPlanningService.update(goal, title, subject, normalizedDeadline, estimatedMinutes);
     });
     if (!found) { this.academicGoals = previous; return false; }
     try {
@@ -1385,6 +1419,7 @@ export struct Index {
     if (index < 0 || index >= this.tasks.length) {
       return;
     }
+    if (!TodayStudyOverrideService.realTask(this.tasks[index]) || this.tasks[index].completed) { return; }
     if (index === this.currentTaskIndex && this.isRunning) { this.currentTab = 3; return; }
     this.archiveInterruptedFocus();
     this.currentTaskIndex = index;
@@ -1421,6 +1456,8 @@ export struct Index {
   }
 
   private startTimer(): void {
+    const task: StudyTask | undefined = this.tasks[this.currentTaskIndex];
+    if (task === undefined || !TodayStudyOverrideService.realTask(task) || task.completed) { return; }
     if (this.isRunning || this.remainingSeconds <= 0) {
       return;
     }
@@ -1579,23 +1616,19 @@ export struct Index {
   private learningContextInput(text: string, appendMode: boolean = false,
     planningBudget?: number): LearningContextInput {
     const metrics: StudyMetrics = this.studyMetrics();
-    const goals: AcademicGoal[] = GoalPlanningService.activeGoals(this.academicGoals, this.actionClock);
-    const subjects: string[] = Array.from(new Set(goals.map((goal: AcademicGoal) => goal.subject).concat(
-      this.tasks.filter((task: StudyTask) => !task.completed).map((task: StudyTask) => task.subject))));
+    const subjects: string[] = Array.from(new Set(this.tasks.filter((task: StudyTask) => !task.completed)
+      .map((task: StudyTask) => task.subject)));
     const activeOverride: TodayStudyOverride | undefined = this.todayStudyOverride.date === this.beijingDayKey() ?
       this.todayStudyOverride : undefined;
     const realSchedule: boolean = this.setupScheduleReady && this.scheduleItems.length > 0 &&
       this.scheduleItems.every((item: ScheduleItem) => !item.id.startsWith('demo-'));
     const dailyTargetRemaining: number = LearningActionService.budget(this.snapshot());
     const decision: AgentDecisionResult = AgentDecisionService.decide(this.snapshot(), this.actionClock);
-    const fallbackExamDays: number = this.profileExamDateConfirmed ?
-      GoalPlanningService.daysUntil(this.profileExamDate, this.actionClock) : 999;
-    const fallbackExamDate: string = fallbackExamDays >= 0 && fallbackExamDays !== 999 ? this.profileExamDate : '';
     // 云端只接收当前真正剩余的预算；持久层 availableMinutes 仍是兼容的当天总预算。
     const confirmedMinutes: number | undefined = activeOverride?.availableMinutes === undefined ? undefined :
       dailyTargetRemaining;
     return {
-      academicGoals: goals,
+      academicGoals: [],
       todayStudyOverride: activeOverride,
       confirmedAvailableMinutes: this.bankPlanMode && planningBudget !== undefined ? planningBudget : confirmedMinutes,
       localDailyPlanTaskIds: decision.dailyPlan.map(item => item.taskId),
@@ -1614,18 +1647,16 @@ export struct Index {
         name: this.profileName,
         grade: this.profileGrade,
         major: this.profileMajor,
-        goal: goals.length > 0 ? goals.map((goal: AcademicGoal) => goal.title).join('；') : this.profileGoal,
+        goal: '',
         subject: subjects.length > 1 ? '多个课程' : subjects[0] ?? this.profileSubject,
-        examDate: goals.length === 1 ? goals[0].deadline :
-          this.activeGoal()?.goal.deadline ?? fallbackExamDate,
+        examDate: '',
         dailyMinutes: this.profileDailyMinutes,
         preferredTime: this.profilePreferredTime,
         learningStyle: this.profileLearningStyle,
         supportStyle: this.profileSupportStyle
       },
       date: this.beijingDayKey(),
-      examDays: goals.length === 1 ? GoalPlanningService.daysUntil(goals[0].deadline) :
-        this.activeGoal() !== undefined ? this.examDays() : fallbackExamDays >= 0 ? fallbackExamDays : 999,
+      examDays: 999,
       energyState: this.energyState,
       scheduleReady: realSchedule,
       scheduleItems: realSchedule ? this.scheduleItems : [],
@@ -1706,7 +1737,7 @@ export struct Index {
     this.addFloatingMessage('user', text, mode);
     if (mode === 'planning') {
       this.agentInput = text;
-      this.requestTodayPlan(text, false, true);
+      this.handleTodayConversation(text);
       return;
     }
     this.floatingSupportBusy = true;
@@ -1716,6 +1747,283 @@ export struct Index {
     }).catch((error: Error) => {
       this.floatingAgentError = error.message.length > 0 ? error.message : '星球暂时没有回应，请稍后再试';
     }).finally(() => { this.floatingSupportBusy = false; });
+  }
+
+  private smallPlanetHistory(currentText: string): SmallPlanetConversationFact[] {
+    const history: AgentConversationMessage[] = this.floatingAgentMessages
+      .filter((message: AgentConversationMessage) => message.mode === 'planning').slice(-9);
+    if (history.length > 0 && history[history.length - 1].role === 'user' &&
+      history[history.length - 1].text === currentText) { history.pop(); }
+    return history.slice(-8).map((message: AgentConversationMessage): SmallPlanetConversationFact => ({
+      role: message.role, text: message.text
+    }));
+  }
+
+  private smallPlanetRequest(text: string, route: string, fallback: string, operationResult: string,
+    persisted: boolean, understandingRequested: boolean = false): SmallPlanetReplyRequest {
+    const snapshot: StudyStateSnapshot = this.snapshot();
+    const decision: AgentDecisionResult = AgentDecisionService.decide(snapshot, this.actionClock);
+    const active: TodayStudyOverride | undefined = TodayStudyOverrideService.active(snapshot, this.actionClock);
+    const activeTasks: SmallPlanetTaskFact[] = this.tasks.filter((task: StudyTask) =>
+      !task.completed && TodayStudyOverrideService.realTask(task) &&
+      TodayStudyOverrideService.currentTask(task, active)).slice(0, 12).map((task: StudyTask): SmallPlanetTaskFact => ({
+        taskId: task.id ?? '', title: task.title,
+        canonicalSubject: TodayStudyOverrideService.subjectName(task.subject),
+        displaySubject: TodayStudyOverrideService.subjectName(task.subject), minutes: task.minutes,
+        state: task.outcome === 'focused' || task.outcome === 'submitted' ? 'pending-feedback' :
+          task.outcome === 'studying' ? 'focusing' : 'unfinished'
+      }));
+    const plan: SmallPlanetPlanFact[] = decision.dailyPlan.map((item): SmallPlanetPlanFact => ({
+      taskId: item.taskId, title: item.title,
+      displaySubject: TodayStudyOverrideService.subjectName(item.subject), minutes: item.suggestedMinutes
+    }));
+    const goals: SmallPlanetGoalFact[] = this.academicGoals.filter((goal: AcademicGoal) => !goal.completed)
+      .slice(0, 8).map((goal: AcademicGoal): SmallPlanetGoalFact => ({
+        goalId: goal.id, title: goal.title, subject: TodayStudyOverrideService.subjectName(goal.subject),
+        deadline: goal.deadline
+      }));
+    const recommended: SmallPlanetPlanFact | undefined = decision.recommendedAction.taskId === undefined ? undefined : {
+      taskId: decision.recommendedAction.taskId, title: decision.recommendedAction.headline,
+      displaySubject: TodayStudyOverrideService.subjectName(decision.recommendedAction.subject),
+      minutes: decision.recommendedAction.minutes
+    };
+    const pending: StudyTask | undefined = this.tasks.find((task: StudyTask) =>
+      !task.completed && (task.outcome === 'focused' || task.outcome === 'submitted'));
+    const focusId: string | undefined = this.isRunning ? this.tasks[this.currentTaskIndex]?.id : undefined;
+    const confirmedSchedule: boolean = this.setupScheduleReady && this.scheduleItems.length > 0 &&
+      this.scheduleItems.every((item: ScheduleItem) => !item.id.startsWith('demo-'));
+    return {
+      messageId: `small-planet-${Date.now()}-${this.floatingAgentMessages.length}`,
+      route: route, currentUserMessage: text, conversationContext: this.smallPlanetHistory(text),
+      operationResult: operationResult, persisted: persisted,
+      canonicalSubject: TodayStudyOverrideService.subjectName(active?.intent?.subject ?? active?.preferredSubject ?? ''),
+      remainingMinutes: active?.availableMinutes === undefined ? undefined : this.availableMinutesToday(),
+      todayStudyOverride: active,
+      activeTasks: activeTasks, academicGoals: goals,
+      mentionedSubjects: TodayStudyOverrideService.subjectsIn(text), understandingRequested: understandingRequested,
+      recommendedAction: recommended, dailyPlan: plan,
+      currentFocusTaskId: focusId, pendingFeedbackTaskId: pending?.id,
+      confirmedScheduleSummary: confirmedSchedule ? this.todayCourseHint() : undefined,
+      deterministicFallback: fallback
+    };
+  }
+
+  private async addSmallPlanetReply(text: string, route: string, fallback: string,
+    operationResult: string = 'read-only', persisted: boolean = false,
+    understandingRequested: boolean = false): Promise<SmallPlanetReplyResponse | undefined> {
+    const request: SmallPlanetReplyRequest = this.smallPlanetRequest(
+      text, route, fallback, operationResult, persisted, understandingRequested);
+    const started: number = Date.now();
+    try {
+      const response: SmallPlanetReplyResponse = await SmallPlanetClient.reply(request);
+      const reply: string = response.reply?.trim() ?? '';
+      if (reply.length === 0) { throw new Error('小星球没有生成有效回复'); }
+      if (understandingRequested) {
+        const understanding: SmallPlanetUnderstanding = SmallPlanetSemanticValidator.validate(
+          response.understanding, this.snapshot(), this.actionClock);
+        this.pendingSmallPlanetProposal = understanding.confirmationRequired && understanding.allocation.length > 0 ?
+          understanding : undefined;
+      }
+      this.addFloatingMessage('assistant', reply, 'planning');
+      StudyDecisionDebug.smallPlanet({ messageId: request.messageId, route: route, intentKind: route,
+        canonicalSubject: request.canonicalSubject, panguRequested: true, panguSucceeded: true,
+        panguLatencyMs: Date.now() - started, panguResponseValidated: true,
+        replySource: 'pangu', selectedTaskId: request.recommendedAction?.taskId ?? '', persisted: persisted,
+        validatorResult: operationResult });
+      return response;
+    } catch (error) {
+      if (understandingRequested) { this.pendingSmallPlanetProposal = undefined; }
+      this.addFloatingMessage('assistant', fallback, 'planning');
+      StudyDecisionDebug.smallPlanet({ messageId: request.messageId, route: route, intentKind: route,
+        canonicalSubject: request.canonicalSubject, panguRequested: true, panguSucceeded: false,
+        panguLatencyMs: Date.now() - started, panguResponseValidated: false,
+        replySource: 'deterministic-fallback', selectedTaskId: request.recommendedAction?.taskId ?? '',
+        persisted: persisted, validatorResult: operationResult });
+      return undefined;
+    }
+  }
+
+  private async commitTodayConversation(next: TodayStudyOverride, previous: TodayStudyOverride,
+    added: StudyTask[] = [], creationIntent?: TodayIntent, nextDeferrals?: ActionDeferral[]): Promise<void> {
+    PlanValidator.validateTodayCreation(this.snapshot(), creationIntent ?? next.intent ?? { action: 'plan', scope: 'today', source: 'user-chat' },
+      added, next, Date.now());
+    let settle: () => void = () => {};
+    this.todayCommitSettlement = new Promise<void>((resolve) => { settle = () => resolve(); });
+    const previousDeferrals: ActionDeferral[] = this.actionDeferrals;
+    if (nextDeferrals !== undefined) { this.actionDeferrals = nextDeferrals; }
+    const addedIds: string[] = added.map((task: StudyTask) => task.id ?? '');
+    this.tasks = this.tasks.concat(added);
+    this.todayStudyOverride = next;
+    this.preferredTaskId = next.preferredTaskId ?? '';
+    this.actionClock = Date.now();
+    try {
+      await this.persistState(true);
+      StudyDecisionDebug.event('PERSIST_RESULT', next.preferredTaskId ?? '', '', '', 'saved');
+      StudyDecisionDebug.event('TODAY_OVERRIDE', next.preferredTaskId ?? '', next.intent?.subject ?? '', '',
+        `minutes=${next.availableMinutes === undefined ? 'unknown' : next.availableMinutes}`);
+      this.todayIntentUndo.push(previous.date === this.beijingDayKey() ? previous : { date: this.beijingDayKey() });
+      if (this.todayIntentUndo.length > 20) { this.todayIntentUndo.shift(); }
+    } catch (error) {
+      this.tasks = this.tasks.filter((task: StudyTask) => !addedIds.includes(task.id ?? ''));
+      if (nextDeferrals !== undefined) { this.actionDeferrals = previousDeferrals; }
+      this.todayStudyOverride = previous;
+      this.preferredTaskId = previous.preferredTaskId ?? '';
+      this.actionClock = Date.now();
+      StudyDecisionDebug.event('PERSIST_RESULT', '', '', '', 'failed-rolled-back');
+      throw new Error('今天安排没有保存成功，请重试；尚未确认修改');
+    } finally { settle(); }
+  }
+
+  private semanticFallback(route: SmallPlanetRouteDecision): string {
+    const budget: string = route.timeBudgetMinutes === undefined ? '' : `你提到大约${route.timeBudgetMinutes}分钟。`;
+    if (route.subjects.length > 1) {
+      return `${budget}你同时在权衡${route.subjects.join('和')}，这不是单科切换。小星球暂时无法完成更细的权衡，我先保留原安排，不会替你修改任务。`;
+    }
+    if (route.semanticRoute === 'advice-or-explanation') {
+      return `${budget}这个问题需要结合当前任务和安排解释。小星球暂时无法完成更自然的分析，我先保留原安排。`;
+    }
+    return `${budget}我还不能确定你是想听建议，还是立即修改安排，所以先不改任何任务。可以再告诉我希望先讨论，还是直接执行。`;
+  }
+
+  private async handleSemanticConversation(text: string, route: SmallPlanetRouteDecision): Promise<void> {
+    this.agentLoading = true;
+    this.pendingSmallPlanetProposal = undefined;
+    const fallback: string = this.semanticFallback(route);
+    try {
+      const response: SmallPlanetReplyResponse | undefined = await this.addSmallPlanetReply(
+        text, route.semanticRoute, fallback, 'proposed', false, true);
+      const understanding: SmallPlanetUnderstanding | undefined = response?.understanding;
+      StudyDecisionDebug.smallPlanetRouter({ messageId: `router-${Date.now()}`,
+        routerDecision: 'semantic', deterministicEligible: false,
+        deterministicConfidence: route.deterministicConfidence, semanticRoute: route.semanticRoute,
+        panguUnderstandingRequested: true, panguUnderstandingSucceeded: understanding !== undefined,
+        executionRequested: understanding?.executionRequested ?? false,
+        confirmationRequired: understanding?.confirmationRequired ?? false,
+        subjects: understanding?.subjects.map(item => item.subject) ?? route.subjects,
+        timeBudgetMinutes: understanding?.timeBudgetMinutes ?? route.timeBudgetMinutes,
+        selectedTaskIds: understanding?.allocation.map(item => item.taskId) ?? [],
+        persistAttempted: false, persisted: false, panguReplyRequested: true,
+        panguReplySucceeded: response !== undefined, replySource: response === undefined ?
+          'deterministic-fallback' : 'pangu' });
+    } finally { this.agentLoading = false; }
+  }
+
+  private async confirmSmallPlanetProposal(text: string): Promise<void> {
+    const proposal: SmallPlanetUnderstanding | undefined = this.pendingSmallPlanetProposal;
+    if (proposal === undefined) {
+      this.addFloatingMessage('assistant', '目前没有等待确认的建议，我没有修改今天的安排。', 'planning');
+      return;
+    }
+    const decision: AgentDecisionResult = AgentDecisionService.decide(this.snapshot(), this.actionClock);
+    if (decision.recommendedAction.stage === 'resume' || decision.recommendedAction.stage === 'verify') {
+      this.addFloatingMessage('assistant', decision.recommendedAction.stage === 'resume' ?
+        '先完成正在进行的专注；这份建议还没有写入安排。' : '先完成当前学习反馈；这份建议还没有写入安排。', 'planning');
+      return;
+    }
+    const validated: SmallPlanetUnderstanding = SmallPlanetSemanticValidator.validate(
+      proposal, this.snapshot(), this.actionClock);
+    const previous: TodayStudyOverride = JSON.parse(JSON.stringify(this.todayStudyOverride)) as TodayStudyOverride;
+    const active: TodayStudyOverride = TodayStudyOverrideService.active(this.snapshot(), this.actionClock) ??
+      { date: this.beijingDayKey() };
+    const next: TodayStudyOverride = JSON.parse(JSON.stringify(active)) as TodayStudyOverride;
+    const taskIds: string[] = validated.allocation.map(item => item.taskId);
+    const minutes: number[] = validated.allocation.map(item => item.minutes);
+    const subjects: string[] = validated.subjects.map(item => TodayStudyOverrideService.subjectName(item.subject));
+    next.preferredTaskId = taskIds[0] ?? '';
+    next.preferredSubject = subjects.length === 1 ? subjects[0] : '';
+    next.suggestedTaskIds = taskIds;
+    next.suggestedTaskMinutes = minutes;
+    next.intent = { action: 'execute', scope: 'today', source: 'user-chat', taskId: next.preferredTaskId };
+    if (subjects.length === 1) { next.intent.subject = subjects[0]; }
+    if (validated.timeBudgetMinutes !== undefined) {
+      next.availableMinutes = LearningActionService.totalBudgetForAdditional(
+        this.snapshot(), validated.timeBudgetMinutes, this.actionClock);
+    }
+    this.agentCommitBusy = true;
+    try {
+      await this.commitTodayConversation(next, previous, [], next.intent);
+      this.pendingSmallPlanetProposal = undefined;
+      const replyResponse: SmallPlanetReplyResponse | undefined = await this.addSmallPlanetReply(
+        text, 'confirmed-proposal', TodayIntentService.describe(
+        this.snapshot(), this.actionClock), 'persisted', true);
+      StudyDecisionDebug.smallPlanetRouter({ messageId: `router-${Date.now()}`,
+        routerDecision: 'confirm-proposal', deterministicEligible: true, deterministicConfidence: 'high',
+        semanticRoute: 'confirmation', panguUnderstandingRequested: false,
+        panguUnderstandingSucceeded: true, executionRequested: true, confirmationRequired: false,
+        subjects: subjects, timeBudgetMinutes: validated.timeBudgetMinutes, selectedTaskIds: taskIds,
+        persistAttempted: true, persisted: true, panguReplyRequested: true,
+        panguReplySucceeded: replyResponse !== undefined, replySource: replyResponse === undefined ?
+          'deterministic-fallback' : 'pangu' });
+    } catch (error) {
+      this.floatingAgentError = error instanceof Error ? error.message : '建议没有保存成功，请重试';
+    } finally { this.agentCommitBusy = false; }
+  }
+
+  private async handleTodayConversation(text: string): Promise<void> {
+    // 不记录用户原文（可能包含个人信息）；诊断只保留长度与后续结构化学习字段。
+    StudyDecisionDebug.event('USER_TEXT', '', '', '', `redacted,length=${text.length}`);
+    const confirmedStrategy: boolean = /^(就按这个安排|按这个安排|确认安排)[。！!\s]*$/.test(text) && this.todayStrategyText.length > 0;
+    if (!confirmedStrategy) {
+      const route: SmallPlanetRouteDecision = SmallPlanetConversationRouter.decide(
+        text, this.snapshot(), this.pendingSmallPlanetProposal !== undefined);
+      if (route.path === 'semantic') { await this.handleSemanticConversation(text, route); return; }
+      if (route.path === 'confirm-proposal') { await this.confirmSmallPlanetProposal(text); return; }
+      StudyDecisionDebug.smallPlanetRouter({ messageId: `router-${Date.now()}`,
+        routerDecision: 'deterministic', deterministicEligible: true,
+        deterministicConfidence: route.deterministicConfidence, semanticRoute: route.semanticRoute,
+        panguUnderstandingRequested: false, panguUnderstandingSucceeded: false,
+        executionRequested: true, confirmationRequired: false, subjects: route.subjects,
+        timeBudgetMinutes: route.timeBudgetMinutes, selectedTaskIds: [], persistAttempted: false,
+        persisted: false, panguReplyRequested: false, panguReplySucceeded: false,
+        replySource: 'pending-execution' });
+    }
+    const requestText: string = confirmedStrategy ? this.todayStrategyText : text;
+    const resolution: TodayIntentResolution = TodayIntentService.resolve(requestText, this.snapshot(), Date.now(), confirmedStrategy);
+    if (resolution.kind === 'strategy') {
+      this.todayStrategyText = text;
+      await this.addSmallPlanetReply(text, 'strategy', resolution.message, 'proposed', false);
+      return;
+    }
+    if (resolution.kind === 'plan') { this.requestTodayPlan(text, false, true); return; }
+    if (resolution.kind === 'reminder' || resolution.kind === 'show' || resolution.kind === 'clarify' ||
+      resolution.kind === 'explain') {
+      await this.addSmallPlanetReply(text, resolution.kind, resolution.message, 'read-only', false);
+      return;
+    }
+    this.agentCommitBusy = true;
+    try {
+      const previous: TodayStudyOverride = JSON.parse(JSON.stringify(this.todayStudyOverride)) as TodayStudyOverride;
+      if (resolution.kind === 'undo') {
+        const last: TodayStudyOverride | undefined = this.todayIntentUndo[this.todayIntentUndo.length - 1];
+        if (last === undefined || last.date !== this.beijingDayKey()) {
+          this.addFloatingMessage('assistant', '本次会话没有可撤销的今日安排修改。', 'planning');
+          return;
+        }
+        await this.commitTodayConversation(last, previous);
+        this.todayIntentUndo.pop();
+        this.todayIntentUndo.pop();
+      } else if (resolution.override !== undefined) {
+        await this.commitTodayConversation(resolution.override, previous, resolution.createdTasks ?? []);
+      }
+      this.agentRequestId++;
+      this.agentGenerated = false;
+      this.floatingPlanPending = false;
+      this.todayStrategyText = '';
+      await this.addSmallPlanetReply(text, resolution.kind,
+        TodayIntentService.describe(this.snapshot(), this.actionClock), 'persisted', true);
+    } catch (error) {
+      this.floatingAgentError = error instanceof Error ? error.message : '今天安排未保存，请重试';
+      StudyDecisionDebug.smallPlanet({ messageId: `small-planet-failed-${Date.now()}`, route: resolution.kind,
+        intentKind: resolution.kind, canonicalSubject: resolution.intent.subject ?? '', panguRequested: false,
+        panguSucceeded: false, panguLatencyMs: 0, panguResponseValidated: false,
+        replySource: 'deterministic-system', selectedTaskId: resolution.intent.taskId ?? '', persisted: false,
+        validatorResult: 'failed' });
+    } finally {
+      this.agentCommitBusy = false;
+    }
+    if (confirmedStrategy && this.todayStrategyText.length === 0) {
+      this.requestTodayPlan(requestText, false, true);
+    }
   }
 
   private todayCourseHint(): string {
@@ -1780,36 +2088,57 @@ export struct Index {
     const input: LearningContextInput = this.learningContextInput(text, fromFloating, planningBudget);
     const request: AgentPlanRequest = LearningDecisionPolicy.buildRequest(input);
     const policyReasons: string[] = LearningDecisionPolicy.priorityEvidence(input);
-    LearningPlanningOrchestrator.decide(request, policyReasons).then((decision: PlanningDecision) => {
+    LearningPlanningOrchestrator.decide(request, policyReasons).then(async (decision: PlanningDecision) => {
       if (requestId !== this.agentRequestId || !this.profileCompleted) {
         return;
       }
       this.setAgentPreview(decision.plan);
       this.agentError = decision.notice;
       if (fromFloating) {
-        this.addFloatingMessage('assistant', decision.plan.summary.length > 0 ? decision.plan.summary :
-          '我整理了已有任务的学习节奏；确认后会把第一项设为今天优先。', 'planning');
+        this.agentCommitBusy = true;
+        const currentRequest: AgentPlanRequest = LearningDecisionPolicy.buildRequest(
+          this.learningContextInput(text, true));
+        const accepted: AgentPlan = PlanValidator.validateExisting(decision.plan, currentRequest);
+        const previous: TodayStudyOverride = JSON.parse(JSON.stringify(this.todayStudyOverride)) as TodayStudyOverride;
+        const active: TodayStudyOverride = TodayStudyOverrideService.active(this.snapshot()) ?? { date: this.beijingDayKey() };
+        const next: TodayStudyOverride = JSON.parse(JSON.stringify(active)) as TodayStudyOverride;
+        if (currentRequest.context.protectedStage !== 'resume' && currentRequest.context.protectedStage !== 'verify') {
+          // 模型建议不得冒充用户指定任务；存为低于用户选择的已校验建议。
+          next.suggestedTaskIds = accepted.tasks.map((task: AgentGeneratedTask) => task.taskId ?? '');
+          next.suggestedTaskMinutes = accepted.tasks.map((task: AgentGeneratedTask) => task.minutes);
+        }
+        await this.commitTodayConversation(next, previous);
+        this.agentGenerated = false;
+        this.floatingPlanPending = false;
+        await this.addSmallPlanetReply(text, 'plan', TodayIntentService.describe(this.snapshot(), this.actionClock),
+          'persisted', true);
       }
     }).catch((error: Error) => {
       if (requestId !== this.agentRequestId || !this.profileCompleted) {
         return;
       }
       this.agentError = error.message.length > 0 ? error.message : '学习决策链暂不可用，请稍后重试';
-      if (fromFloating) { this.floatingAgentError = this.agentError; }
+      if (fromFloating) {
+        this.agentGenerated = false;
+        this.floatingPlanPending = false;
+        this.floatingAgentError = this.agentError;
+      }
     }).finally(() => {
       if (requestId === this.agentRequestId) {
         this.agentLoading = false;
+        this.agentCommitBusy = false;
       }
     });
   }
 
-  private acceptAgentPlan(): void {
+  private async acceptAgentPlan(): Promise<void> {
     if (this.agentCommitBusy) { return; }
     if (this.agentPreviewTasks.length === 0) {
       return;
     }
     if (this.bankPlanMode) { this.acceptBankPlan(); return; }
     const wasFloating: boolean = this.floatingPlanPending;
+    this.agentCommitBusy = true;
     try {
       // Recheck against current storage: a task may have been completed while the model was responding.
       const currentRequest: AgentPlanRequest = LearningDecisionPolicy.buildRequest(
@@ -1817,27 +2146,26 @@ export struct Index {
       const accepted: AgentPlan = PlanValidator.validateExisting(this.previewPlan(), currentRequest);
       const stage: string = currentRequest.context.protectedStage ?? '';
       if (stage !== 'resume' && stage !== 'verify') {
-        const firstId: string = accepted.tasks[0].taskId ?? '';
         const active: TodayStudyOverride = this.todayStudyOverride.date === this.beijingDayKey() ?
           this.todayStudyOverride : { date: this.beijingDayKey() };
-        this.todayStudyOverride = { date: active.date, availableMinutes: active.availableMinutes,
-          preferredTaskId: firstId, preferredSubject: active.preferredSubject,
-          skippedTaskIds: active.skippedTaskIds, temporaryTaskIds: active.temporaryTaskIds };
+        const next: TodayStudyOverride = JSON.parse(JSON.stringify(active)) as TodayStudyOverride;
+        next.suggestedTaskIds = accepted.tasks.map((task: AgentGeneratedTask) => task.taskId ?? '');
+        next.suggestedTaskMinutes = accepted.tasks.map((task: AgentGeneratedTask) => task.minutes);
+        await this.commitTodayConversation(next, this.todayStudyOverride);
       }
       this.agentAcceptedMessage = stage === 'resume' || stage === 'verify' ?
         '当前专注或学习反馈优先保留，完成后星球会重新安排' :
-        '已把这项设为今天优先处理；后续会随完成情况重新安排';
+        TodayIntentService.describe(this.snapshot(), this.actionClock);
       this.agentRequestId += 1;
       this.agentGenerated = false;
       this.floatingPlanPending = false;
       if (wasFloating) { this.floatingAcceptedMessage = this.agentAcceptedMessage; }
       this.agentFeedbackMode = false;
       this.bankPlanMode = false;
-      this.persistSilently();
     } catch (error) {
       this.agentError = error instanceof Error ? error.message : '已有任务发生变化，请重新安排';
       if (wasFloating) { this.floatingAgentError = this.agentError; }
-    }
+    } finally { this.agentCommitBusy = false; }
   }
 
   private async acceptBankPlan(): Promise<void> {
@@ -2045,9 +2373,6 @@ export struct Index {
             this.profileName = value;
           } else if (field === 'major') {
             this.profileMajor = value;
-          } else if (field === 'examDate') {
-            this.profileExamDate = value;
-            this.profileExamDateConfirmed = value.trim().length > 0;
           }
         },
         onSelectAvatar: () => {
@@ -2055,6 +2380,10 @@ export struct Index {
         },
         onChoiceChange: (group: string, value: string) => {
           this.setChoice(group, value);
+        },
+        onExamDateChange: (value: string) => {
+          this.profileExamDate = GoalPlanningService.normalizeDeadline(value);
+          this.profileExamDateConfirmed = this.profileExamDate.length > 0;
         },
         onUseDemoSchedule: () => {
           this.useDemoSchedule();
@@ -2112,16 +2441,6 @@ export struct Index {
             masteryScore: this.masteryScore(),
             masteryStatus: this.masteryStatus(),
             tasks: this.tasks,
-            recommendationTitle: this.recommendation().title,
-            recommendationSubject: this.recommendation().subject,
-            recommendationReason: this.recommendation().reason,
-            recommendationMinutes: this.recommendation().minutes,
-            recommendationTaskIndex: this.recommendation().taskIndex,
-            recommendationAllDone: this.recommendation().allDone,
-            recommendationEvidence: this.recommendation().evidence,
-            timelineTime: this.recommendation().timelineTime,
-            timelineTitle: this.recommendation().timelineTitle,
-            timelineDetail: this.recommendation().timelineDetail,
             showRecommendationDetails: this.showRecommendationDetails,
             actionEnabled: true,
             activeGoalTitle: this.activeGoal()?.goal.title ?? '',

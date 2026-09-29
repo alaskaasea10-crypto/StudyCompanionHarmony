@@ -14,10 +14,12 @@ from typing import Any
 from agent_service import (
     AgentServiceError,
     call_emotional_support,
+    call_small_planet_reply,
     call_openpangu,
     load_config,
     validate_request,
     validate_support_request,
+    validate_small_planet_request,
 )
 from schedule_ocr import ScheduleOcrError, parse_schedule_lines, recognize_schedule_image
 
@@ -87,6 +89,7 @@ def handle_api(
                 "capabilities": {
                     "agentPlan": True,
                     "emotionalSupport": True,
+                    "smallPlanetReply": True,
                     "scheduleLineParser": True,
                     "scheduleImageOcr": enable_image_ocr,
                 },
@@ -96,6 +99,7 @@ def handle_api(
     allowed_paths = {
         "/api/agent/today-plan",
         "/api/agent/emotional-support",
+        "/api/agent/small-planet-reply",
         "/api/schedule/parse",
         "/api/schedule/ocr",
     }
@@ -112,6 +116,11 @@ def handle_api(
         if normalized_path == "/api/agent/emotional-support":
             data = validate_support_request(payload)
             result = call_emotional_support(data, load_config())
+            return ApiResult(200, {"ok": True, **result})
+
+        if normalized_path == "/api/agent/small-planet-reply":
+            data = validate_small_planet_request(payload)
+            result = call_small_planet_reply(data, load_config())
             return ApiResult(200, {"ok": True, **result})
 
         if normalized_path == "/api/schedule/parse":

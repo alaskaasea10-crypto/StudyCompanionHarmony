@@ -21,6 +21,7 @@ class ApiRouterTests(unittest.TestCase):
         self.assertEqual("test-runtime", result.payload["runtime"])
         self.assertFalse(result.payload["capabilities"]["scheduleImageOcr"])
         self.assertTrue(result.payload["capabilities"]["scheduleLineParser"])
+        self.assertTrue(result.payload["capabilities"]["smallPlanetReply"])
 
     def test_invalid_json_is_rejected(self) -> None:
         result = handle_api("POST", "/api/agent/today-plan", "not-json")
@@ -77,6 +78,19 @@ class ApiRouterTests(unittest.TestCase):
         }))
         self.assertEqual(200, result.status)
         self.assertEqual("听起来你今天很累。", result.payload["reply"])
+        mocked_call.assert_called_once()
+
+    @patch("api_router.call_small_planet_reply")
+    def test_small_planet_reply_has_separate_route(self, mocked_call) -> None:
+        mocked_call.return_value = {"reply": "好，今天先从高数开始。", "source": "openpangu"}
+        result = handle_api("POST", "/api/agent/small-planet-reply", json.dumps({
+            "messageId": "m-1", "route": "commit", "currentUserMessage": "我想复习高数",
+            "conversationContext": [], "operationResult": "persisted", "persisted": True,
+            "canonicalSubject": "高等数学", "activeTasks": [], "dailyPlan": [],
+            "deterministicFallback": "今天先复习高等数学。"
+        }))
+        self.assertEqual(200, result.status)
+        self.assertEqual("openpangu", result.payload["source"])
         mocked_call.assert_called_once()
 
 

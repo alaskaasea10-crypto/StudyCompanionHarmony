@@ -1,4 +1,4 @@
-import { AcademicGoal, FocusRecord, KnowledgeMastery, ScheduleItem, StudyTask, TodayStudyOverride } from './StudyModels';
+import { FocusRecord, KnowledgeMastery, ScheduleItem, StudyTask, TodayStudyOverride } from './StudyModels';
 import { BankLearningEvidence } from './QuestionBankModels';
 
 export interface QuizFeedbackPayload {
@@ -23,7 +23,6 @@ export interface AgentProfilePayload {
 }
 
 export interface AgentContextPayload {
-  academicGoals?: AcademicGoal[];
   bankTopicId?: string;
   bankAppendMode?: boolean;
   bankEvidence?: BankLearningEvidence[];
@@ -105,6 +104,86 @@ export interface AgentApiResponse {
 export interface PlanningDecision {
   plan: AgentPlan;
   notice: string;
+}
+
+export interface SmallPlanetConversationFact {
+  role: string;
+  text: string;
+}
+
+export interface SmallPlanetTaskFact {
+  taskId: string;
+  title: string;
+  canonicalSubject: string;
+  displaySubject: string;
+  minutes: number;
+  state: string;
+}
+
+export interface SmallPlanetPlanFact {
+  taskId: string;
+  title: string;
+  displaySubject: string;
+  minutes: number;
+}
+
+export interface SmallPlanetGoalFact {
+  goalId: string;
+  title: string;
+  subject: string;
+  deadline: string;
+}
+
+export interface SmallPlanetSemanticSubject {
+  subject: string;
+  reason: string;
+}
+
+export interface SmallPlanetSemanticAllocation {
+  taskId: string;
+  minutes: number;
+}
+
+export interface SmallPlanetUnderstanding {
+  mode: string;
+  intent: string;
+  executionRequested: boolean;
+  subjects: SmallPlanetSemanticSubject[];
+  timeBudgetMinutes?: number;
+  needsExplanation: boolean;
+  confirmationRequired: boolean;
+  allocation: SmallPlanetSemanticAllocation[];
+}
+
+export interface SmallPlanetReplyRequest {
+  messageId: string;
+  route: string;
+  currentUserMessage: string;
+  conversationContext: SmallPlanetConversationFact[];
+  operationResult: string;
+  persisted: boolean;
+  canonicalSubject: string;
+  remainingMinutes?: number;
+  todayStudyOverride?: TodayStudyOverride;
+  activeTasks: SmallPlanetTaskFact[];
+  academicGoals: SmallPlanetGoalFact[];
+  mentionedSubjects: string[];
+  understandingRequested?: boolean;
+  recommendedAction?: SmallPlanetPlanFact;
+  dailyPlan: SmallPlanetPlanFact[];
+  currentFocusTaskId?: string;
+  pendingFeedbackTaskId?: string;
+  confirmedScheduleSummary?: string;
+  deterministicFallback: string;
+}
+
+export interface SmallPlanetReplyResponse {
+  ok: boolean;
+  reply?: string;
+  source?: string;
+  model?: string;
+  understanding?: SmallPlanetUnderstanding;
+  error?: string;
 }
 
 export interface PlanCommitResult {

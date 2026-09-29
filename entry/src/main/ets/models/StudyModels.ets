@@ -27,14 +27,31 @@ export interface ActionDeferral {
 }
 
 // 只影响指定日期的调度；临时任务仍使用原 StudyTask 和稳定 taskId 保存。
+export interface TodayIntent {
+  subject?: string;
+  taskId?: string;
+  requestedMinutes?: number;
+  // budget 是从现在起的剩余预算；task 只约束当前行动，不冒充全天空闲。
+  minutesKind?: string;
+  topic?: string;
+  activity?: string;
+  action: string;
+  scope: string;
+  source: string;
+}
+
 export interface TodayStudyOverride {
   date: string;
+  intent?: TodayIntent;
   // 持久层兼容字段：当天总预算。界面输入“接下来时长”时在保存边界换算为 已专注 + 追加分钟。
   availableMinutes?: number;
   preferredTaskId?: string;
   preferredSubject?: string;
   skippedTaskIds?: string[];
   temporaryTaskIds?: string[];
+  // 仅保存通过 PlanValidator 的真实任务建议；用户选择与状态保护仍优先。
+  suggestedTaskIds?: string[];
+  suggestedTaskMinutes?: number[];
 }
 
 export interface ScheduleItem {
@@ -228,7 +245,7 @@ export function createDefaultSquadMembers(profileName: string): SquadMember[] {
       name: '阿哲',
       avatarText: '哲',
       accentColor: '#F2A65A',
-      status: '休息中',
+      status: '稍后学习',
       currentTask: '数据结构课程设计',
       todayMinutes: 52,
       streakDays: 4,
@@ -277,8 +294,8 @@ export function createDemoTasks(subject: string, dailyMinutes: number): StudyTas
     },
     {
       id: `profile-notes-${createdAt}`,
-      title: '复习今日课堂笔记',
-      subject: '今日课程',
+      title: `复习${subject}课堂笔记`,
+      subject: subject,
       minutes: 20,
       completed: false,
       source: 'profile',
@@ -291,20 +308,108 @@ export function createDemoTasks(subject: string, dailyMinutes: number): StudyTas
 export function createDemoSchedule(): ScheduleItem[] {
   return [
     {
-      id: 'demo-math',
+      id: 'demo-schedule-mon-math',
       weekday: 1,
       startTime: '08:00',
-      endTime: '09:50',
+      endTime: '09:40',
       course: '高等数学',
       location: '教学楼 A203'
     },
     {
-      id: 'demo-data-structure',
+      id: 'demo-schedule-mon-english',
+      weekday: 1,
+      startTime: '10:00',
+      endTime: '11:40',
+      course: '大学英语',
+      location: '教学楼 B105'
+    },
+    {
+      id: 'demo-schedule-mon-programming',
       weekday: 1,
       startTime: '14:00',
-      endTime: '15:50',
-      course: '数据结构实验',
+      endTime: '15:40',
+      course: '程序设计基础',
       location: '实验楼 C301'
+    },
+    {
+      id: 'demo-schedule-tue-linear',
+      weekday: 2,
+      startTime: '10:00',
+      endTime: '11:40',
+      course: '线性代数',
+      location: '教学楼 A305'
+    },
+    {
+      id: 'demo-schedule-tue-physics',
+      weekday: 2,
+      startTime: '14:00',
+      endTime: '15:40',
+      course: '大学物理',
+      location: '理科楼 B201'
+    },
+    {
+      id: 'demo-schedule-wed-english',
+      weekday: 3,
+      startTime: '08:00',
+      endTime: '09:40',
+      course: '大学英语',
+      location: '教学楼 B105'
+    },
+    {
+      id: 'demo-schedule-wed-math',
+      weekday: 3,
+      startTime: '14:00',
+      endTime: '15:40',
+      course: '高等数学',
+      location: '教学楼 A203'
+    },
+    {
+      id: 'demo-schedule-wed-pe',
+      weekday: 3,
+      startTime: '16:00',
+      endTime: '17:40',
+      course: '体育',
+      location: '东区操场'
+    },
+    {
+      id: 'demo-schedule-thu-linear',
+      weekday: 4,
+      startTime: '08:00',
+      endTime: '09:40',
+      course: '线性代数',
+      location: '教学楼 A305'
+    },
+    {
+      id: 'demo-schedule-thu-programming',
+      weekday: 4,
+      startTime: '10:00',
+      endTime: '11:40',
+      course: '程序设计基础',
+      location: '实验楼 C301'
+    },
+    {
+      id: 'demo-schedule-thu-politics',
+      weekday: 4,
+      startTime: '14:00',
+      endTime: '15:40',
+      course: '思想政治理论',
+      location: '人文楼 D102'
+    },
+    {
+      id: 'demo-schedule-fri-math',
+      weekday: 5,
+      startTime: '10:00',
+      endTime: '11:40',
+      course: '高等数学',
+      location: '教学楼 A203'
+    },
+    {
+      id: 'demo-schedule-fri-english',
+      weekday: 5,
+      startTime: '14:00',
+      endTime: '15:40',
+      course: '大学英语',
+      location: '教学楼 B105'
     }
   ];
 }

@@ -12,7 +12,15 @@ source = source.replace(/^import .*;\n/gm, '')
   .replace('export struct HomePageView', 'class HomePageView') +
   '\n}\nexports.HomePageView = HomePageView;';
 const box = { exports: {}, Date, console, Promise, setTimeout,
-  formatSubjectName: value => value };
+  formatSubjectName: value => value,
+  TodayStudyOverrideService: {
+    activeTaskIndices: (tasks, override, today) => tasks.map((task, index) => ({ task, index }))
+      .filter(item => !item.task.completed && (item.task.source !== 'today-temporary' ||
+        (override.date === today && (override.temporaryTaskIds ?? []).includes(item.task.id))))
+      .map(item => item.index),
+    visibleTasks: (tasks, override, today) => tasks.filter(task => task.source !== 'today-temporary' ||
+      (override.date === today && (override.temporaryTaskIds ?? []).includes(task.id)))
+  } };
 vm.runInNewContext(ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS }
 }).outputText, box);

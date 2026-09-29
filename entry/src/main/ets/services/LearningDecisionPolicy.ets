@@ -97,11 +97,6 @@ export class LearningDecisionPolicy {
     const bankWeak: BankLearningEvidence | undefined = BankLearningBridge.weakest(
       BankLearningBridge.relevant(LearningDecisionPolicy.buildRequest(input)));
     if (bankWeak !== undefined) { evidence.push(BankLearningBridge.reason(bankWeak)); }
-    if (input.examDays >= 0 && input.examDays <= 3) {
-      evidence.push(`考试仅剩${input.examDays}天，优先处理核心薄弱点`);
-    } else if (input.examDays >= 0 && input.examDays < 999) {
-      evidence.push(`距离考试${input.examDays}天，按节奏推进复习`);
-    }
     const unfinishedCount: number = input.tasks.filter((task: StudyTask) => !task.completed).length;
     if (unfinishedCount > 0) {
       evidence.push(`仍有${unfinishedCount}项未完成任务，避免重复规划`);
@@ -149,12 +144,11 @@ export class LearningDecisionPolicy {
         return feedback;
       });
     const context: AgentContextPayload = {
-      academicGoals: input.academicGoals ?? [],
       bankTopicId: input.bankTopicId,
       bankAppendMode: input.bankAppendMode === true,
       bankEvidence: input.bankEvidence ?? [],
       date: input.date,
-      examDays: input.examDays,
+      examDays: 999,
       energyState: input.energyState,
       availableMinutesToday: availableMinutes,
       todayStudyOverride: input.todayStudyOverride,
@@ -168,7 +162,9 @@ export class LearningDecisionPolicy {
       appendMode: input.appendMode === true,
       scheduleReady: input.scheduleReady,
       scheduleItems: input.scheduleItems,
-      unfinishedTasks: input.tasks.filter((task: StudyTask) => !task.completed),
+      unfinishedTasks: input.tasks.filter((task: StudyTask) => !task.completed)
+        .map((task: StudyTask): StudyTask => ({ id: task.id, title: task.title, subject: task.subject,
+          minutes: task.minutes, completed: task.completed, source: task.source, outcome: task.outcome })),
       todayFocusMinutes: input.metrics.todayFocusMinutes,
       todayFocusSessionCount: input.metrics.todayFocusSessionCount,
       quizAttemptCount: input.metrics.quizAttemptCount,
@@ -178,7 +174,10 @@ export class LearningDecisionPolicy {
     };
     return {
       requestText: input.requestText,
-      profile: input.profile,
+      profile: { name: input.profile.name, grade: input.profile.grade, major: input.profile.major,
+        goal: '', subject: input.profile.subject, examDate: '', dailyMinutes: input.profile.dailyMinutes,
+        preferredTime: input.profile.preferredTime, learningStyle: input.profile.learningStyle,
+        supportStyle: input.profile.supportStyle },
       context: context
     };
   }

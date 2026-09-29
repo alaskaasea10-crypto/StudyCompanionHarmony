@@ -5,6 +5,7 @@ import { BankLearningEvidence } from '../models/QuestionBankModels';
 import { AgentDailyPlanItem, AgentDecisionEvidence, AgentDecisionReason, AgentDecisionResult } from '../services/AgentDecisionService';
 import { formatSubjectName } from '../utils/SubjectDisplayName';
 import { LearningResourcePicker } from '../components/LearningResourcePicker';
+import { TodayStudyOverrideService } from '../services/TodayStudyOverrideService';
 
 @Component
 export struct HomePageView {
@@ -50,16 +51,6 @@ export struct HomePageView {
   @Prop todayStudyOverride: TodayStudyOverride = { date: '' };
   @Prop todayDate: string = '';
   @Prop todayRemainingMinutes: number = 0;
-  @Prop recommendationTitle: string = '';
-  @Prop recommendationSubject: string = '';
-  @Prop recommendationReason: string = '';
-  @Prop recommendationMinutes: number = 0;
-  @Prop recommendationTaskIndex: number = 0;
-  @Prop recommendationAllDone: boolean = false;
-  @Prop recommendationEvidence: string[] = [];
-  @Prop timelineTime: string = '';
-  @Prop timelineTitle: string = '';
-  @Prop timelineDetail: string = '';
   @Prop showRecommendationDetails: boolean = false;
   @Prop actionEnabled: boolean = true;
   @Prop activeGoalTitle: string = '';
@@ -80,17 +71,11 @@ export struct HomePageView {
   onBusinessOverlayChange: (visible: boolean) => void = () => {};
 
   private availableTaskIndices(): number[] {
-    const indices: number[] = [];
-    this.tasks.forEach((task: StudyTask, index: number) => {
-      if (!task.completed && (task.source !== 'today-temporary' ||
-        (this.todayStudyOverride.temporaryTaskIds ?? []).includes(task.id ?? ''))) { indices.push(index); }
-    });
-    return indices;
+    return TodayStudyOverrideService.activeTaskIndices(this.tasks, this.todayStudyOverride, this.todayDate);
   }
 
   private visibleTasks(): StudyTask[] {
-    return this.tasks.filter((task: StudyTask) => task.source !== 'today-temporary' ||
-      (this.todayStudyOverride.temporaryTaskIds ?? []).includes(task.id ?? ''));
+    return TodayStudyOverrideService.visibleTasks(this.tasks, this.todayStudyOverride, this.todayDate);
   }
 
   private upcomingPlan(): AgentDailyPlanItem[] {

@@ -1,4 +1,4 @@
-import { ActionDeferral, StudyTask, TodayStudyOverride } from '../models/StudyModels';
+import { ActionDeferral, StudyTask, TodayIntent, TodayStudyOverride } from '../models/StudyModels';
 
 export interface StudyTaskDeletionResult {
   tasks: StudyTask[];
@@ -25,8 +25,12 @@ export class StudyTaskDeletionService {
   static remove(taskId: string, tasks: StudyTask[], todayStudyOverride: TodayStudyOverride,
     actionDeferrals: ActionDeferral[], deletedTaskIds: string[]): StudyTaskDeletionResult {
     const remainingTasks: StudyTask[] = tasks.filter((task: StudyTask) => task.id !== taskId);
+    const intent: TodayIntent | undefined = todayStudyOverride.intent === undefined ? undefined :
+      JSON.parse(JSON.stringify(todayStudyOverride.intent)) as TodayIntent;
+    if (intent?.taskId === taskId) { intent.taskId = undefined; }
     const override: TodayStudyOverride = {
       date: todayStudyOverride.date,
+      intent: intent,
       availableMinutes: todayStudyOverride.availableMinutes,
       preferredTaskId: todayStudyOverride.preferredTaskId === taskId ? '' : todayStudyOverride.preferredTaskId,
       preferredSubject: todayStudyOverride.preferredSubject,

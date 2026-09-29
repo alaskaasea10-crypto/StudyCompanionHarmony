@@ -1,7 +1,6 @@
-import { AcademicGoal, StudyStateSnapshot, StudyTask, ScheduleItem, TodayStudyOverride } from '../models/StudyModels';
+import { StudyStateSnapshot, StudyTask, ScheduleItem, TodayStudyOverride } from '../models/StudyModels';
 import { BankLearningEvidence } from '../models/QuestionBankModels';
 import { DailyAction } from './DailyActionService';
-import { GoalPlanningService } from './GoalPlanningService';
 import { StudyDataCenter } from './StudyDataCenter';
 import { TaskOutcomeService } from './TaskOutcomeService';
 import { TodayStudyOverrideService } from './TodayStudyOverrideService';
@@ -9,13 +8,6 @@ import { TodayStudyOverrideService } from './TodayStudyOverrideService';
 export interface DailyCandidate {
   taskIndex: number;
   task: StudyTask;
-  deadlineDays?: number;
-  deadlineSource?: string;
-}
-
-interface LinkedDeadline {
-  days?: number;
-  source?: string;
 }
 
 // 首页、学习入口和桌面卡片只从这里获得下一步，不各自猜测。
@@ -25,7 +17,8 @@ export class LearningActionService {
     now: number = Date.now()): string | undefined {
     const day: string = TodayStudyOverrideService.date(now);
     const results: StudyTask[] = (snapshot.tasks ?? []).filter((task: StudyTask) =>
-      task.completed && task.subject === subject && (task.submittedAt ?? 0) > 0 &&
+      task.completed && TodayStudyOverrideService.subjectName(task.subject) ===
+      TodayStudyOverrideService.subjectName(subject) && (task.submittedAt ?? 0) > 0 &&
       TodayStudyOverrideService.date(task.submittedAt ?? 0) === day &&
       (task.studyExperience === 'smooth' || task.studyExperience === 'normal' ||
         task.studyExperience === 'struggling'))
@@ -102,19 +95,9 @@ export class LearningActionService {
     return hour < 24 && minute < 60 ? hour * 60 + minute : -1;
   }
 
-  private static linkedDeadline(task: StudyTask, goals: AcademicGoal[], now: number): LinkedDeadline {
-    const goal: AcademicGoal | undefined = goals.find((item: AcademicGoal) =>
-      !item.completed && item.id === task.goalId);
-    if (goal === undefined) { return {}; }
-    // 阶段 dueDate 是规则拆解出的推算值；排序只引用用户保存的目标截止日期。
-    const days: number = GoalPlanningService.daysUntil(goal.deadline, now);
-    return days === 999 ? {} : { days: days, source: '已保存的学习目标' };
-  }
-
-  // 全部真实未完成任务形成候选池；目标只提供关联任务的真实日期，不缩小候选范围。
+  // 今日候选仅来自真实任务与今日意图；长期日期提醒不参与调度。
   static candidates(snapshot: StudyStateSnapshot, now: number = Date.now()): DailyCandidate[] {
     const override: TodayStudyOverride | undefined = TodayStudyOverrideService.active(snapshot, now);
-    const goals: AcademicGoal[] = GoalPlanningService.activeGoals(snapshot.academicGoals ?? [], now);
     const deferred = (task: StudyTask): boolean => (snapshot.actionDeferrals ?? [])
       .some(item => item.key === `task:${task.id}` && item.until > now);
     const candidates: DailyCandidate[] = [];
@@ -122,9 +105,8 @@ export class LearningActionService {
       if (!TodayStudyOverrideService.eligibleTask(task, override) || deferred(task) ||
         task.outcome === 'focused' || task.outcome === 'submitted' ||
         !Number.isFinite(task.minutes) || task.minutes < 5) { return; }
-      const deadline: LinkedDeadline = LearningActionService.linkedDeadline(task, goals, now);
-      candidates.push({ taskIndex: taskIndex, task: task, deadlineDays: deadline.days,
-        deadlineSource: deadline.source });
+      if (!TodayStudyOverrideService.matchesIntent(task, override)) { return; }
+      candidates.push({ taskIndex: taskIndex, task: task });
     });
     const preferredId: string = override?.preferredTaskId ?? '';
     const preferredSubject: string = override?.preferredSubject?.trim() ?? '';
@@ -132,15 +114,17 @@ export class LearningActionService {
       const preferredTaskDifference: number = Number(right.task.id === preferredId && preferredId.length > 0) -
         Number(left.task.id === preferredId && preferredId.length > 0);
       if (preferredTaskDifference !== 0) { return preferredTaskDifference; }
-      const urgent = (item: DailyCandidate): number => item.deadlineDays !== undefined && item.deadlineDays <= 1 ? 1 : 0;
-      const urgentDifference: number = urgent(right) - urgent(left);
-      if (urgentDifference !== 0) { return urgentDifference; }
-      const subjectDifference: number = Number(right.task.subject === preferredSubject && preferredSubject.length > 0) -
-        Number(left.task.subject === preferredSubject && preferredSubject.length > 0);
+      const subjectDifference: number = Number(TodayStudyOverrideService.subjectName(right.task.subject) ===
+        TodayStudyOverrideService.subjectName(preferredSubject) && preferredSubject.length > 0) -
+        Number(TodayStudyOverrideService.subjectName(left.task.subject) ===
+          TodayStudyOverrideService.subjectName(preferredSubject) && preferredSubject.length > 0);
       if (subjectDifference !== 0) { return subjectDifference; }
-      const leftDays: number = left.deadlineDays ?? 999;
-      const rightDays: number = right.deadlineDays ?? 999;
-      if (leftDays !== rightDays) { return leftDays - rightDays; }
+      const suggestions: string[] = override?.suggestedTaskIds ?? [];
+      const leftRank: number = suggestions.indexOf(left.task.id ?? '');
+      const rightRank: number = suggestions.indexOf(right.task.id ?? '');
+      if (leftRank !== rightRank) {
+        return (leftRank < 0 ? suggestions.length : leftRank) - (rightRank < 0 ? suggestions.length : rightRank);
+      }
       // 需求相同时保留原有待办顺序，不为多学科视觉强行轮换。
       return left.taskIndex - right.taskIndex;
     });
@@ -152,11 +136,17 @@ export class LearningActionService {
       completionStandard: '', nextStep: '', subject: subject, minutes: 0, taskIndex: -1, topicId: '' };
   }
 
+  static suggestedMinutes(task: StudyTask, override?: TodayStudyOverride): number {
+    const index: number = (override?.suggestedTaskIds ?? []).indexOf(task.id ?? '');
+    const value: number | undefined = index >= 0 ? override?.suggestedTaskMinutes?.[index] : undefined;
+    return value !== undefined && Number.isFinite(value) && value >= 5 ? Math.min(task.minutes, value) : task.minutes;
+  }
+
   static decide(snapshot: StudyStateSnapshot, evidence: BankLearningEvidence[], now: number = Date.now()): DailyAction {
     const tasks: StudyTask[] = snapshot.tasks ?? [];
-    const subject: string = snapshot.profileSubject;
+    const subject: string = TodayStudyOverrideService.active(snapshot, now)?.intent?.subject ?? '';
     const current: StudyTask | undefined = tasks[snapshot.currentTaskIndex];
-    if (current !== undefined && !current.completed && (snapshot.isRunning ||
+    if (current !== undefined && TodayStudyOverrideService.realTask(current) && !current.completed && (snapshot.isRunning ||
       (((snapshot.focusElapsedSeconds ?? 0) > 0 || current.outcome === 'studying') && snapshot.remainingSeconds > 0))) {
       return { stage: 'resume', key: `task:${current.id}`, taskId: current.id,
         headline: current.title, actionTitle: '回到专注',
@@ -165,7 +155,7 @@ export class LearningActionService {
         minutes: Math.ceil(snapshot.remainingSeconds / 60), taskIndex: snapshot.currentTaskIndex, topicId: '' };
     }
     // 已投入的学习必须先反馈，即使今天选择了另一项或跳过了本任务。
-    const pendingResult: number = tasks.findIndex((task: StudyTask) => !task.completed &&
+    const pendingResult: number = tasks.findIndex((task: StudyTask) => TodayStudyOverrideService.realTask(task) && !task.completed &&
       (task.outcome === 'focused' || task.outcome === 'submitted'));
     if (pendingResult >= 0) {
       const task: StudyTask = tasks[pendingResult];
@@ -184,6 +174,11 @@ export class LearningActionService {
     if (free !== undefined && free < 5) { return LearningActionService.waiting(subject, '先安心上课', '课后再继续，任务不会丢'); }
     const first: DailyCandidate | undefined = LearningActionService.candidates(snapshot, now)[0];
     if (first === undefined) {
+      const intentSubject: string = TodayStudyOverrideService.active(snapshot, now)?.intent?.subject ?? '';
+      if (intentSubject.length > 0) {
+        return LearningActionService.waiting(intentSubject, `暂无可执行的${intentSubject}任务`,
+          '先添加该科任务，或调整今天安排；不会替你切换科目');
+      }
       if (tasks.some((item: StudyTask) => TodayStudyOverrideService.eligibleTask(item,
         TodayStudyOverrideService.active(snapshot, now)))) {
         return LearningActionService.waiting(subject, '今天的建议已暂缓', '原目标和任务都保留');
@@ -194,9 +189,11 @@ export class LearningActionService {
     }
     const override: TodayStudyOverride | undefined = TodayStudyOverrideService.active(snapshot, now);
     const reason: string = first.task.id === override?.preferredTaskId ? '这是你今天选定的当前安排' :
-      first.deadlineDays !== undefined ? `${first.deadlineSource ?? '已保存的目标'}：${first.deadlineDays <= 0 ?
-        '今天或此前到期' : `还有${first.deadlineDays}天`}` : '先推进已保存的未完成任务';
-    const baseMinutes: number = Math.min(first.task.minutes, budget, free ?? first.task.minutes);
+      override?.intent?.subject ? '按你今天明确选择的科目继续' : '先推进已保存的未完成任务';
+    const requested: number = override?.intent?.minutesKind === 'task' ?
+      override.intent.requestedMinutes ?? first.task.minutes : first.task.minutes;
+    const baseMinutes: number = Math.min(LearningActionService.suggestedMinutes(first.task, override), requested,
+      budget, free ?? first.task.minutes);
     const minutes: number = LearningActionService.experienceAdjustedMinutes(
       snapshot, first.task.subject, baseMinutes, now);
     return { stage: 'execute', key: `task:${first.task.id}`, taskId: first.task.id,

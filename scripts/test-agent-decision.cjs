@@ -9,7 +9,7 @@ const cache = new Map();
 function load(name) {
   if (name === 'BuildProfile') return { DEBUG: false };
   if (cache.has(name)) return cache.get(name);
-  const filename = name === 'StudyModels' ? 'models/StudyModels.ets' :
+  const filename = name === 'SubjectDisplayName' ? 'utils/SubjectDisplayName.ets' : name === 'StudyModels' ? 'models/StudyModels.ets' :
     name === 'QuestionBankModels' ? 'models/QuestionBankModels.ets' : `services/${name}.ets`;
   const source = fs.readFileSync(path.join(root, 'entry/src/main/ets', filename), 'utf8');
   const box = { exports: {}, Date, console, require: input => load(path.basename(input)) };
@@ -78,7 +78,7 @@ assert.equal(afterCompletion.dailyPlan.some(item => item.taskId === task.id), fa
 assert.equal(decisions.decide({ ...base, tasks: [] }, now).dailyPlan.length, 0);
 
 const confirmed = decisions.decide({ ...base, profileExamDateConfirmed: true }, now);
-assert.equal(confirmed.evidence.some(item => item.label === '已确认考试日期' && item.value === '还有14天'), true);
+assert.equal(confirmed.evidence.some(item => item.label === '已确认考试日期' && item.value === '还有14天'), false);
 assert.equal(decisions.decide({ ...base, profileExamDate: '2026-02-31',
   profileExamDateConfirmed: true }, now).evidence.some(item => item.label === '已确认考试日期'), false);
 
@@ -131,20 +131,31 @@ const realSubjects = { ...base, tasks: [englishReal, linearReal, math], academic
 const unchanged = JSON.stringify(realSubjects.tasks);
 const scheduled = decisions.decide(realSubjects, now);
 assert.deepEqual(Array.from(scheduled.dailyPlan, item => item.taskId),
-  ['math-real', 'english-real', 'linear-real']);
+  ['english-real', 'linear-real', 'math-real']);
 assert.equal(scheduled.recommendedAction.taskId, scheduled.dailyPlan[0].taskId);
+const deadlineEdited = decisions.decide({ ...realSubjects, academicGoals: goals.map(goal => ({
+  ...goal, deadline: '2026-12-31'
+})) }, now);
+assert.deepEqual(Array.from(deadlineEdited.dailyPlan, item => item.taskId),
+  Array.from(scheduled.dailyPlan, item => item.taskId),
+  'editing an AcademicGoal deadline must not reorder today\'s StudyTask plan');
+assert.deepEqual(Array.from(deadlineEdited.dailyPlan, item => item.suggestedMinutes),
+  Array.from(scheduled.dailyPlan, item => item.suggestedMinutes),
+  'editing an AcademicGoal deadline must not change today\'s suggested minutes');
+assert.equal(deadlineEdited.recommendedAction.taskId, scheduled.recommendedAction.taskId,
+  'editing an AcademicGoal deadline must not replace the current recommended action');
 assert.equal(new Set(scheduled.dailyPlan.map(item => item.taskId)).size, scheduled.dailyPlan.length);
 assert.equal(JSON.stringify(realSubjects.tasks), unchanged);
 const sixtyMinutePlan = decisions.decide({ ...realSubjects,
   todayStudyOverride: { date: '2026-09-20', availableMinutes: 60 } }, now);
 assert.deepEqual(Array.from(sixtyMinutePlan.dailyPlan, item => item.taskId),
-  ['math-real', 'english-real', 'linear-real']);
+  ['english-real', 'linear-real', 'math-real']);
 assert.equal(sixtyMinutePlan.recommendedAction.taskId, sixtyMinutePlan.dailyPlan[0].taskId);
 assert.equal(sixtyMinutePlan.dailyPlan.reduce((sum, item) => sum + item.suggestedMinutes, 0), 60);
 const thirtyMinutePlan = decisions.decide({ ...realSubjects,
   todayStudyOverride: { date: '2026-09-20', availableMinutes: 30 } }, now);
 assert.deepEqual(Array.from(thirtyMinutePlan.dailyPlan, item => item.taskId),
-  ['math-real', 'english-real']);
+  ['english-real', 'linear-real']);
 assert.equal(thirtyMinutePlan.recommendedAction.taskId, thirtyMinutePlan.dailyPlan[0].taskId);
 assert.equal(thirtyMinutePlan.dailyPlan.reduce((sum, item) => sum + item.suggestedMinutes, 0), 30);
 assert.equal(thirtyMinutePlan.dailyPlan[0].taskId, sixtyMinutePlan.dailyPlan[0].taskId,
@@ -179,7 +190,7 @@ assert.equal(preferredEnglish.dailyPlan[0].taskId, englishReal.id);
 const nextDay = now + 86400000;
 const expired = decisions.decide({ ...realSubjects,
   todayStudyOverride: { ...today, preferredTaskId: englishReal.id } }, nextDay);
-assert.equal(expired.recommendedAction.taskId, math.id);
+assert.equal(expired.recommendedAction.taskId, englishReal.id);
 const unknownTime = decisions.decide({ ...realSubjects,
   todayStudyOverride: { date: '2026-09-20' } }, now);
 assert.equal(unknownTime.dailyPlan.length, 1);
@@ -212,9 +223,15 @@ const delayed = decisions.decide({ ...realSubjects, actionDeferrals: [
 assert.equal(delayed.dailyPlan.some(item => item.taskId === math.id), false);
 // 真正执行首页调整方法，确认改偏好不会改旧任务 ID 或中断专注；临时任务只创建一次。
 const indexSource = fs.readFileSync(path.join(root, 'entry/src/main/ets/pages/Index.ets'), 'utf8');
-const adjustMethod = indexSource.slice(indexSource.indexOf('  private adjustTodayTask('),
-  indexSource.indexOf('  private recordTaskResult('));
-const adjustmentBox = { exports: {}, Date, console, LearningActionService: actions };
+const adjustMethod = indexSource.slice(indexSource.indexOf('  private async adjustTodayTask('),
+  indexSource.indexOf('  private async deleteTodayTask('));
+const commitMethod = indexSource.slice(indexSource.indexOf('  private async commitTodayConversation('),
+  indexSource.indexOf('  private async handleTodayConversation('));
+class AdjustmentClock extends Date { static now() { return now; } }
+const adjustmentBox = { exports: {}, Date: AdjustmentClock, console, LearningActionService: actions,
+  TodayStudyOverrideService: load('TodayStudyOverrideService').TodayStudyOverrideService,
+  PlanValidator: load('PlanValidator').PlanValidator,
+  StudyDecisionDebug: load('StudyDecisionDebug').StudyDecisionDebug };
 vm.runInNewContext(ts.transpileModule(`class AdjustmentHarness {
   tasks = []; todayStudyOverride = { date: '' }; preferredTaskId = ''; actionDeferrals = [];
   isRunning = true; focusElapsedSeconds = 30; currentTaskIndex = 0; persistCount = 0;
@@ -222,6 +239,7 @@ vm.runInNewContext(ts.transpileModule(`class AdjustmentHarness {
   studyDayKey = '2026-09-20'; todayMinutes = 0; focusRecords = []; quizAttempts = [];
   remainingSeconds = 0; focusSegmentStartedAt = 0; focusSessionCredited = true;
   energyState = '一般'; agentRequestId = 0; agentLoading = true; agentGenerated = true;
+  agentCommitBusy = false; todayIntentUndo = [];
   beijingDayKey() { return '2026-09-20'; }
   snapshot() { return {
     tasks: this.tasks, profileDailyMinutes: this.profileDailyMinutes, studyDayKey: this.studyDayKey,
@@ -232,13 +250,16 @@ vm.runInNewContext(ts.transpileModule(`class AdjustmentHarness {
     todayStudyOverride: this.todayStudyOverride
   }; }
   persistSilently() { this.persistCount++; }
+  async persistState() { this.persistCount++; }
+  ${commitMethod}
   ${adjustMethod}
 } exports.AdjustmentHarness = AdjustmentHarness;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS }
 }).outputText, adjustmentBox);
+(async () => {
 const adjustment = new adjustmentBox.exports.AdjustmentHarness();
 adjustment.tasks = [math, englishReal];
-adjustment.adjustTodayTask({ date: '2026-09-20', preferredTaskId: englishReal.id,
+await adjustment.adjustTodayTask({ date: '2026-09-20', preferredTaskId: englishReal.id,
   availableMinutes: 60 }, '', '', 25);
 assert.deepEqual(Array.from(adjustment.tasks, item => item.id), [math.id, englishReal.id]);
 assert.equal(adjustment.isRunning, true);
@@ -246,18 +267,18 @@ assert.equal(adjustment.focusElapsedSeconds, 30);
 assert.equal(adjustment.currentTaskIndex, 0);
 assert.equal(adjustment.todayStudyOverride.preferredTaskId, englishReal.id);
 const idsBeforeBudgetOnlyChange = JSON.stringify(adjustment.tasks.map(item => item.id));
-adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 30 }, '', '', 25);
+await adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 30 }, '', '', 25);
 assert.equal(adjustment.todayStudyOverride.availableMinutes, 30);
 assert.equal(JSON.stringify(adjustment.tasks.map(item => item.id)), idsBeforeBudgetOnlyChange,
   'saving a budget-only override must not create or replace StudyTask ids');
 assert.equal(adjustment.isRunning, true,
   'changing the budget must not interrupt an ongoing focus session');
-adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 60 },
+await adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 60 },
   '临时整理课堂笔记', '大学英语', 15);
 assert.equal(adjustment.tasks.length, 3);
 const stableTemporaryId = adjustment.tasks[2].id;
 assert.equal(adjustment.todayStudyOverride.temporaryTaskIds[0], stableTemporaryId);
-adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 60 }, '', '', 15);
+await adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 60 }, '', '', 15);
 assert.equal(adjustment.tasks.length, 3);
 assert.equal(adjustment.tasks[2].id, stableTemporaryId);
 // 页面输入的是“从现在起追加的时长”；已专注60分钟后输入30，底层兼容字段保存总预算90。
@@ -268,7 +289,7 @@ adjustment.focusRecords = [
   { dayKey: '2026-09-20', elapsedSeconds: 3600 }
 ];
 adjustment.focusElapsedSeconds = 0;
-adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 30,
+await adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 30,
   preferredTaskId: englishReal.id }, '', '', 25);
 assert.equal(adjustment.todayStudyOverride.availableMinutes, 90);
 assert.equal(adjustment.todayStudyOverride.preferredTaskId, englishReal.id);
@@ -276,7 +297,15 @@ assert.equal(actions.budget(adjustment.snapshot(), now), 30);
 assert.equal(adjustment.agentLoading, false);
 assert.equal(adjustment.agentGenerated, false);
 assert.ok(adjustment.agentRequestId > 0);
+adjustment.todayStudyOverride = { date: '2026-09-20', availableMinutes: 90, preferredTaskId: math.id,
+  preferredSubject: '高等数学', intent: { subject: '高等数学', taskId: math.id, action: 'execute', scope: 'today', source: 'user-chat' } };
+await adjustment.adjustTodayTask({ date: '2026-09-20', availableMinutes: 30,
+  preferredTaskId: englishReal.id, preferredSubject: '大学英语' }, '', '', 25);
+assert.equal(adjustment.todayStudyOverride.preferredTaskId, math.id);
+assert.equal(adjustment.todayStudyOverride.intent.subject, '高等数学');
+assert.equal(adjustment.todayStudyOverride.availableMinutes, 90);
 assert.equal(indexSource.includes('ensureGoalMilestoneTask'), false);
 assert.equal(indexSource.includes('advanceGoalMilestone'), false);
 assert.equal(indexSource.includes('GoalPlanningService.taskFor'), false);
 console.log('PASS Agent decision: evidence, confirmed-time plan, budget, no mutation, state safety');
+})().catch(error => { console.error(error); process.exitCode = 1; });

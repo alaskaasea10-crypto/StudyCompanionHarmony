@@ -13,17 +13,108 @@ from agent_service import (  # noqa: E402
     AgentConfig,
     build_messages,
     build_support_messages,
+    build_small_planet_messages,
     call_emotional_support,
     call_openpangu,
+    call_small_planet_reply,
     load_config,
     parse_json_object,
     validate_plan,
     validate_request,
     validate_support_request,
+    validate_small_planet_request,
+    validate_small_planet_understanding,
 )
 
 
 class AgentServiceTests(unittest.TestCase):
+    def test_small_planet_reply_uses_limited_context_and_validated_facts(self) -> None:
+        data = validate_small_planet_request({
+            "messageId": "m-1", "route": "commit", "currentUserMessage": "我想复习高数",
+            "conversationContext": [{"role": "user", "text": "今天想学习"}],
+            "operationResult": "persisted", "persisted": True,
+            "canonicalSubject": "高等数学", "remainingMinutes": 120,
+            "activeTasks": [{"taskId": "math-1", "title": "复习高等数学", "canonicalSubject": "高等数学",
+                             "displaySubject": "高等数学", "minutes": 25, "state": "unfinished"}],
+            "recommendedAction": {"taskId": "math-1", "title": "复习高等数学",
+                                  "displaySubject": "高等数学", "minutes": 25},
+            "dailyPlan": [{"taskId": "math-1", "title": "复习高等数学",
+                           "displaySubject": "高等数学", "minutes": 25}],
+            "deterministicFallback": "今天先复习高等数学。",
+        })
+        messages = build_small_planet_messages(data)
+        self.assertIn("客户端事实是唯一真相", messages[0]["content"])
+        self.assertIn('"taskId":"math-1"', messages[-1]["content"])
+        self.assertNotIn("API_KEY", str(messages))
+
+        def transport(_payload, _config, _timeout):
+            return {"choices": [{"message": {"content":
+                '{"assistantReply":"好，今天先从高等数学开始，用25分钟完成这项复习。"}'}}]}
+
+        result = call_small_planet_reply(data,
+            AgentConfig("secret", "https://example.invalid", "test-model"), transport=transport)
+        self.assertEqual("openpangu", result["source"])
+        self.assertIn("25分钟", result["reply"])
+
+    def test_small_planet_rejects_false_commit_claim(self) -> None:
+        data = validate_small_planet_request({
+            "messageId": "m-2", "route": "strategy", "currentUserMessage": "怎么复习高数",
+            "conversationContext": [], "operationResult": "proposed", "persisted": False,
+            "canonicalSubject": "高等数学", "activeTasks": [], "dailyPlan": [],
+            "deterministicFallback": "这是建议，还没有加入今天。",
+        })
+        def transport(_payload, _config, _timeout):
+            return {"choices": [{"message": {"content":
+                '{"assistantReply":"已经帮你安排好了。"}'}}]}
+        with self.assertRaisesRegex(AgentServiceError, "错误声称"):
+            call_small_planet_reply(data,
+                AgentConfig("secret", "https://example.invalid", "test-model"), transport=transport)
+
+    def test_small_planet_semantic_understanding_is_read_only_and_task_safe(self) -> None:
+        data = validate_small_planet_request({
+            "messageId": "m-semantic", "route": "multi-goal-advice",
+            "currentUserMessage": "今晚时间有限，两科怎么分配比较好？",
+            "conversationContext": [], "operationResult": "proposed", "persisted": False,
+            "understandingRequested": True, "mentionedSubjects": ["高等数学", "线性代数"],
+            "remainingMinutes": 60,
+            "activeTasks": [
+                {"taskId": "math-1", "title": "复习高等数学", "canonicalSubject": "高等数学",
+                 "displaySubject": "高等数学", "minutes": 40, "state": "unfinished"},
+                {"taskId": "linear-1", "title": "复习线性代数", "canonicalSubject": "线性代数",
+                 "displaySubject": "线性代数", "minutes": 30, "state": "unfinished"},
+            ],
+            "academicGoals": [{"goalId": "goal-math", "title": "高数考试",
+                               "subject": "高等数学", "deadline": "2026-10-01"}],
+            "dailyPlan": [], "deterministicFallback": "我先不修改安排。",
+        })
+        self.assertTrue(data["understandingRequested"])
+        self.assertEqual(2, len(data["mentionedSubjects"]))
+        understanding = validate_small_planet_understanding({
+            "mode": "advice", "intent": "allocate_study_time", "executionRequested": False,
+            "subjects": [{"subject": "高等数学", "reason": "目标日期信息"},
+                         {"subject": "线性代数", "reason": "用户表达需要兼顾"}],
+            "timeBudgetMinutes": 60, "needsExplanation": True, "confirmationRequired": True,
+            "allocation": [{"taskId": "math-1", "minutes": 35},
+                           {"taskId": "linear-1", "minutes": 25}],
+        }, data)
+        self.assertEqual("advice", understanding["mode"])
+        self.assertEqual(60, sum(item["minutes"] for item in understanding["allocation"]))
+        with self.assertRaisesRegex(AgentServiceError, "无效任务"):
+            validate_small_planet_understanding({**understanding,
+                "allocation": [{"taskId": "invented", "minutes": 20}]}, data)
+
+        def transport(_payload, _config, _timeout):
+            return {"choices": [{"message": {"content": '{"assistantReply":"可以先按两科分配，确认后我再调整。",'
+                '"understanding":{"mode":"advice","intent":"allocate_study_time",'
+                '"executionRequested":false,"subjects":[{"subject":"高等数学","reason":"目标日期信息"},'
+                '{"subject":"线性代数","reason":"用户希望兼顾"}],"timeBudgetMinutes":60,'
+                '"needsExplanation":true,"confirmationRequired":true,"allocation":['
+                '{"taskId":"math-1","minutes":35},{"taskId":"linear-1","minutes":25}]}}'}}]}
+        result = call_small_planet_reply(data,
+            AgentConfig("secret", "https://example.invalid", "test-model"), transport=transport)
+        self.assertEqual("advice", result["understanding"]["mode"])
+        self.assertTrue(result["understanding"]["confirmationRequired"])
+
     def test_emotional_support_is_short_private_and_not_diagnostic(self) -> None:
         data = validate_support_request({
             "message": "最近考试压力很大",

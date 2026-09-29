@@ -50,12 +50,13 @@ assert.match(learningHub, /GoalPlanningService\.activeGoals\(this\.academicGoals
 assert.equal(learningHub.includes('this.academicGoals.filter((goal: AcademicGoal) => !goal.completed)'), false);
 assert.ok(learningHub.includes("Text('暂未设置学习目标')"));
 
-// Home, goal center, local Agent and cloud context all consume the same active-goal authority.
+// Reminder UI shares active-goal authority; execution and cloud ranking exclude reminders.
 assert.ok(home.includes("'暂未设置学习目标'"));
 assert.match(plan, /GoalPlanningService\.activeGoals\(this\.academicGoals, this\.now\)/);
-assert.match(agent, /GoalPlanningService\.activeGoals\(snapshot\.academicGoals \?\? \[\], now\)/);
-assert.match(index, /const goals: AcademicGoal\[\] = GoalPlanningService\.activeGoals\(this\.academicGoals, this\.actionClock\)/);
-assert.match(index, /academicGoals: goals/);
+assert.doesNotMatch(agent, /GoalPlanningService|daysUntil|deadline/);
+assert.doesNotMatch(index.slice(index.indexOf('  private learningContextInput('),
+  index.indexOf('  private setAgentPreview(')), /GoalPlanningService|goal\.deadline/);
+assert.match(index, /academicGoals: \[\]/);
 
 // Goal expiry must not remove or recreate executable tasks or identity-bearing objects.
 const task = { id: 'task-english-stable', title: '完成英语作业', subject: '大学英语', minutes: 25,

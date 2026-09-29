@@ -1,16 +1,19 @@
-export function formatSubjectName(value: string): string {
+export function canonicalSubjectName(value: string): string {
   const source: string = value.trim();
   if (source.length === 0) { return source; }
 
   const normalized: string = source.replace(/\s|_|-/g, '').toLowerCase();
   switch (normalized) {
     case 'collegeenglish': return '大学英语';
-    case 'english': return '英语';
+    case 'english':
+    case '英语': return '大学英语';
     case 'cet4': return '大学英语四级';
     case 'cet6': return '大学英语六级';
-    case 'linearalgebra': return '线性代数';
+    case 'linearalgebra':
+    case '线代': return '线性代数';
     case 'advancedmath':
-    case 'highermathematics': return '高等数学';
+    case 'highermathematics':
+    case '高数': return '高等数学';
     case 'calculus': return '微积分';
     case 'datastructure':
     case 'datastructures': return '数据结构';
@@ -34,6 +37,21 @@ export function formatSubjectName(value: string): string {
     case 'machinelearning': return '机器学习';
     default: break;
   }
+  return source;
+}
+
+export function subjectAliases(): string[] {
+  return ['高等数学', '高数', 'AdvancedMath', 'advanced_math', 'HigherMathematics',
+    '线性代数', '线代', 'LinearAlgebra', 'linear_algebra',
+    '大学英语', '英语', 'CollegeEnglish', 'college_english',
+    '数据结构', 'DataStructure', 'DataStructures', '概率论', '大学物理', '操作系统', '离散数学'];
+}
+
+export function formatSubjectName(value: string): string {
+  const source: string = value.trim();
+  if (source.length === 0) { return source; }
+  const exact: string = canonicalSubjectName(source);
+  if (exact !== source) { return exact; }
 
   const keys: string[] = ['CollegeEnglish', 'LinearAlgebra', 'AdvancedMath', 'HigherMathematics',
     'DataStructures', 'DataStructure', 'OperatingSystems', 'OperatingSystem', 'ComputerNetworks',

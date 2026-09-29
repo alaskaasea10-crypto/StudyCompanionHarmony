@@ -67,7 +67,7 @@ def main() -> None:
     port = int(os.getenv("AGENT_BACKEND_PORT", "8000"))
     server = ThreadingHTTPServer((host, port), AgentRequestHandler)
     print(f"学伴 Agent 服务已启动：http://{host}:{port}")
-    print("健康检查：/health；今日计划：POST /api/agent/today-plan；情绪陪伴：POST /api/agent/emotional-support；课表识别：POST /api/schedule/ocr")
+    print("健康检查：/health；今日计划：POST /api/agent/today-plan；小星球表达：POST /api/agent/small-planet-reply；情绪陪伴：POST /api/agent/emotional-support；课表识别：POST /api/schedule/ocr")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

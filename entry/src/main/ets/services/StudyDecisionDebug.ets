@@ -37,6 +37,41 @@ interface StudyDecisionDebugEventPayload {
   detail: string;
 }
 
+interface SmallPlanetTracePayload {
+  messageId: string;
+  route: string;
+  intentKind: string;
+  canonicalSubject: string;
+  panguRequested: boolean;
+  panguSucceeded: boolean;
+  panguLatencyMs: number;
+  panguResponseValidated: boolean;
+  replySource: string;
+  selectedTaskId: string;
+  persisted: boolean;
+  validatorResult: string;
+}
+
+interface SmallPlanetRouterTracePayload {
+  messageId: string;
+  routerDecision: string;
+  deterministicEligible: boolean;
+  deterministicConfidence: string;
+  semanticRoute: string;
+  panguUnderstandingRequested: boolean;
+  panguUnderstandingSucceeded: boolean;
+  executionRequested: boolean;
+  confirmationRequired: boolean;
+  subjects: string[];
+  timeBudgetMinutes?: number;
+  selectedTaskIds: string[];
+  persistAttempted: boolean;
+  persisted: boolean;
+  panguReplyRequested: boolean;
+  panguReplySucceeded: boolean;
+  replySource: string;
+}
+
 export class StudyDecisionDebug {
   private static lastDecision: string = '';
 
@@ -62,5 +97,20 @@ export class StudyDecisionDebug {
       event: name, taskId: taskId, subject: subject, title: title, detail: detail
     };
     console.debug(`[StudyDecisionDebug] ${JSON.stringify(payload)}`);
+  }
+
+  static candidates(ids: string[]): void {
+    if (!DEBUG) { return; }
+    console.debug(`[StudyDecisionDebug] CANDIDATES ${JSON.stringify(ids)}`);
+  }
+
+  static smallPlanet(payload: SmallPlanetTracePayload): void {
+    if (!DEBUG) { return; }
+    console.debug(`[SMALL_PLANET_TRACE] ${JSON.stringify(payload)}`);
+  }
+
+  static smallPlanetRouter(payload: SmallPlanetRouterTracePayload): void {
+    if (!DEBUG) { return; }
+    console.debug(`[SMALL_PLANET_ROUTER] ${JSON.stringify(payload)}`);
   }
 }

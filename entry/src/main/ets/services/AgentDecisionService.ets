@@ -1,6 +1,5 @@
-import { AcademicGoal, FocusRecord, KnowledgeMastery, QuizAttempt, StudyStateSnapshot, StudyTask, TodayStudyOverride } from '../models/StudyModels';
+import { FocusRecord, KnowledgeMastery, QuizAttempt, StudyStateSnapshot, StudyTask, TodayStudyOverride } from '../models/StudyModels';
 import { DailyAction } from './DailyActionService';
-import { GoalPlanningService } from './GoalPlanningService';
 import { KnowledgeMasteryService } from './KnowledgeMasteryService';
 import { DailyCandidate, LearningActionService } from './LearningActionService';
 import { StudyDataCenter } from './StudyDataCenter';
@@ -58,27 +57,6 @@ export class AgentDecisionService {
       items.every(item => !item.id.startsWith('demo-'));
   }
 
-  private static confirmedExamDays(snapshot: StudyStateSnapshot, now: number): number | undefined {
-    if (snapshot.profileExamDateConfirmed !== true) { return undefined; }
-    const date: string = snapshot.profileExamDate ?? '';
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { return undefined; }
-    const parsed: Date = new Date(`${date}T00:00:00+08:00`);
-    if (!Number.isFinite(parsed.getTime()) || AgentDecisionService.dayKey(parsed.getTime()) !== date) {
-      return undefined;
-    }
-    const days: number = GoalPlanningService.daysUntil(date, now);
-    return days === 999 || days < 0 ? undefined : days;
-  }
-
-  private static decisionGoals(snapshot: StudyStateSnapshot, confirmedExam: boolean,
-    now: number): AcademicGoal[] {
-    const goals: AcademicGoal[] = GoalPlanningService.activeGoals(snapshot.academicGoals ?? [], now);
-    if (confirmedExam) { return goals; }
-    // 旧档案可能自动生成“某科考试”目标；未确认日期不能参与排序。
-    return goals.filter((goal: AcademicGoal) => !(goal.title === `${snapshot.profileSubject}考试` &&
-      goal.subject === snapshot.profileSubject && goal.deadline === snapshot.profileExamDate));
-  }
-
   private static weakPointCount(snapshot: StudyStateSnapshot): number | undefined {
     const attempts: QuizAttempt[] = snapshot.quizAttempts ?? [];
     const mastery: KnowledgeMastery[] = snapshot.knowledgeMastery ?? [];
@@ -124,10 +102,6 @@ export class AgentDecisionService {
         evidence.push({ label: '建议时长', value: `${minutes}分钟`, source: current ? '当前行动时长' :
           minutes < task.minutes ? '任务原定时长与今日可安排时间' : '任务原定时长' });
       }
-      if (candidate?.deadlineDays !== undefined) {
-        evidence.push({ label: '目标日期', value: candidate.deadlineDays <= 0 ? '今天或此前到期' :
-          `还有${candidate.deadlineDays}天`, source: candidate.deadlineSource ?? '已保存的学习目标' });
-      }
       if (current && task.id === override?.preferredTaskId) {
         evidence.push({ label: '当前安排', value: '你选择了先做这项', source: '手动调整' });
       }
@@ -147,7 +121,7 @@ export class AgentDecisionService {
     for (const candidate of candidates) {
       if (remaining < 5) { break; }
       if (candidate.taskIndex === action.taskIndex) { continue; }
-      const minutes: number = Math.min(candidate.task.minutes, remaining);
+      const minutes: number = Math.min(LearningActionService.suggestedMinutes(candidate.task, override), remaining);
       if (minutes < 5) { break; }
       add(candidate.task, minutes, false, candidate);
     }
@@ -156,10 +130,8 @@ export class AgentDecisionService {
 
   static decide(snapshot: StudyStateSnapshot, now: number = Date.now()): AgentDecisionResult {
     const hasSchedule: boolean = AgentDecisionService.realSchedule(snapshot);
-    const examDays: number | undefined = AgentDecisionService.confirmedExamDays(snapshot, now);
     const usableSnapshot: StudyStateSnapshot = JSON.parse(JSON.stringify(snapshot)) as StudyStateSnapshot;
     usableSnapshot.setupScheduleReady = hasSchedule;
-    usableSnapshot.academicGoals = AgentDecisionService.decisionGoals(snapshot, examDays !== undefined, now);
     const action: DailyAction = LearningActionService.decide(usableSnapshot, [], now);
     const day: string = AgentDecisionService.dayKey(now);
     const todayMinutes: number = StudyDataCenter.calculateMetrics(snapshot.tasks ?? [], snapshot.focusRecords ?? [],
@@ -178,12 +150,6 @@ export class AgentDecisionService {
     if (selected !== undefined) {
       evidence.push({ label: '当前任务', value: `${selected.subject} · ${selected.title}`,
         source: selected.source === 'profile' ? '建档生成的初始建议' : preferred ? '你手动设定' : '已保存的待办' });
-      const selectedCandidate: DailyCandidate | undefined = LearningActionService.candidates(usableSnapshot, now)
-        .find((candidate: DailyCandidate) => candidate.task.id === selected.id);
-      if (selectedCandidate?.deadlineDays !== undefined) {
-        evidence.push({ label: '目标截止', value: selectedCandidate.deadlineDays <= 0 ? '今天或此前到期' :
-          `还有${selectedCandidate.deadlineDays}天`, source: selectedCandidate.deadlineSource ?? '已保存的学习目标' });
-      }
       const data: string = action.stage === 'resume' ? '这项专注已经开始' :
         action.stage === 'verify' ? '这项任务已记录投入，尚待提交收获' :
         preferred ? '你把这项任务设为了当前安排' :
@@ -225,16 +191,6 @@ export class AgentDecisionService {
       item.id.startsWith('demo-'))) {
       evidence.push({ label: '课表来源', value: '演示课表未参与决策', source: '课表记录' });
     }
-    if (examDays !== undefined && selected !== undefined && selected.subject === snapshot.profileSubject) {
-      evidence.push({ label: '已确认考试日期', value: examDays < 0 ? `已过期${Math.abs(examDays)}天` :
-        examDays === 0 ? '今天' : `还有${examDays}天`, source: '你确认的个人目标' });
-      if (!preferred && action.stage === 'execute' && examDays >= 0) {
-        reasons.push({ data: examDays === 0 ? '考试日期为今天' : `距离考试${examDays}天`,
-          judgment: '继续推进该科目待办', recommendation: action.headline });
-      }
-    } else if (examDays === undefined && (snapshot.profileExamDate ?? '').length > 0) {
-      evidence.push({ label: '考试日期', value: '待确认，未参与决策', source: '个人档案' });
-    }
     const weakCount: number | undefined = AgentDecisionService.weakPointCount(snapshot);
     if (weakCount !== undefined) {
       evidence.push({ label: '历史练习待巩固点', value: `${weakCount}个`, source: '旧测验记录，仅作状态参考' });
@@ -255,9 +211,8 @@ export class AgentDecisionService {
         recommendation: action.headline });
     }
     const confirmedSources: number = (selected !== undefined && selected.source !== 'profile' ? 1 : 0) +
-      (todayMinutes > 0 ? 1 : 0) + (hasSchedule ? 1 : 0) + (examDays !== undefined ? 1 : 0);
-    const priority: string = action.stage === 'resume' || action.stage === 'verify' || preferred ||
-      (examDays !== undefined && examDays >= 0 && examDays <= 3 && selected?.subject === snapshot.profileSubject) ?
+      (todayMinutes > 0 ? 1 : 0) + (hasSchedule ? 1 : 0);
+    const priority: string = action.stage === 'resume' || action.stage === 'verify' || preferred ?
       '优先处理' : action.stage === 'execute' ? '按计划推进' : '待安排';
     const dailyPlan: AgentDailyPlanItem[] = AgentDecisionService.dailyPlan(usableSnapshot, action, now);
     const result: AgentDecisionResult = {
@@ -279,6 +234,7 @@ export class AgentDecisionService {
         title: item.title, suggestedMinutes: item.suggestedMinutes };
     });
     StudyDecisionDebug.decision(debugAction, debugPlan);
+    StudyDecisionDebug.candidates(LearningActionService.candidates(usableSnapshot, now).map(item => item.task.id ?? ''));
     return result;
   }
 }

@@ -7,8 +7,6 @@ import { http } from '@kit.NetworkKit';
 import { ScheduleApiResponse, ScheduleImportResult, ScheduleOcrLine } from '../models/ScheduleImportModels';
 import { BackendConfig } from './BackendConfig';
 
-const CORE_VISION_TIMEOUT_MS: number = 3500;
-
 export class ScheduleImportClient {
   static async selectAndRecognize(): Promise<ScheduleImportResult> {
     const uri: string = await ScheduleImportClient.selectImage();
@@ -19,40 +17,23 @@ export class ScheduleImportClient {
     const bytes: Uint8Array = ScheduleImportClient.readImage(uri);
     console.info(`ScheduleImport: selected image (${bytes.byteLength} bytes)`);
     try {
-      const lines: ScheduleOcrLine[] = await ScheduleImportClient.withTimeout(
-        ScheduleImportClient.recognizeWithCoreVision(bytes),
-        CORE_VISION_TIMEOUT_MS,
-        '当前设备暂不支持端侧文字识别'
-      );
+      // Core Vision already owns its recognition timeout. A short client-side race can
+      // reject a valid cold start while the system OCR service is still initializing.
+      const lines: ScheduleOcrLine[] = await ScheduleImportClient.recognizeWithCoreVision(bytes);
       if (lines.length > 0) {
         console.info(`ScheduleImport: Core Vision recognized ${lines.length} lines`);
         return await ScheduleImportClient.requestSchedule('/api/schedule/parse', JSON.stringify({ lines: lines }));
       }
     } catch (error) {
       const message: string = error instanceof Error ? error.message : `${error}`;
-      console.info(`ScheduleImport: Core Vision unavailable, using local fallback (${message})`);
+      console.info(`ScheduleImport: Core Vision unavailable, using cloud image fallback (${message})`);
     }
-    console.info('ScheduleImport: sending image to the local OCR fallback');
+    console.info('ScheduleImport: sending image to the cloud OCR fallback');
     const base64: string = new util.Base64Helper().encodeToStringSync(bytes);
     return await ScheduleImportClient.requestSchedule(
       '/api/schedule/ocr',
       JSON.stringify({ imageBase64: base64 })
     );
-  }
-
-  private static withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-    return new Promise<T>((resolve: (value: T) => void, reject: (reason?: Error) => void) => {
-      const timer: number = setTimeout(() => {
-        reject(new Error(message));
-      }, timeoutMs);
-      promise.then((value: T) => {
-        clearTimeout(timer);
-        resolve(value);
-      }).catch((error: Error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-    });
   }
 
   private static async selectImage(): Promise<string> {
@@ -192,7 +173,11 @@ export class ScheduleImportClient {
         throw new Error('课表识别服务返回格式异常，请重试');
       }
       if (response.responseCode < 200 || response.responseCode >= 300 || !payload.ok || payload.scheduleItems === undefined) {
-        throw new Error(payload.error ?? `课表识别服务暂不可用（${response.responseCode}）`);
+        const serviceMessage: string = payload.error ?? `课表识别服务暂不可用（${response.responseCode}）`;
+        if (path === '/api/schedule/ocr' && serviceMessage.includes('本机 OCR 助手缺失')) {
+          throw new Error('端侧文字识别未成功，云端备用识别暂不可用，请换一张清晰完整的课表截图后重试');
+        }
+        throw new Error(serviceMessage);
       }
       if (payload.scheduleItems.length === 0) {
         throw new Error('没有识别出课程，请换一张完整清晰的课表截图');

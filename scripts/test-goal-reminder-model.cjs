@@ -95,10 +95,10 @@ assert.equal(JSON.stringify(candidates.map(item => item.task.id).sort()),
 assert.equal(candidates[0].task.id, other.id);
 assert.equal(LearningActionService.decide(snapshot, [], now).taskId, other.id);
 
-// I: active AcademicGoal data remains in snapshots and Agent request context, without task generation.
+// I: AcademicGoal remains in local snapshots, excluded from planning context.
 assert.ok(indexSource.includes('academicGoals: this.academicGoals'));
-assert.ok(indexSource.includes('academicGoals: goals'));
-assert.ok(indexSource.includes('GoalPlanningService.activeGoals(this.academicGoals'));
+assert.ok(indexSource.includes('academicGoals: []'));
+assert.ok(indexSource.includes('GoalPlanningService.prioritize(this.academicGoals'));
 
 // UI: no expired goal in the main list and no task/milestone management in the goal center.
 assert.ok(planPage.includes('ForEach(this.currentGoals()'));

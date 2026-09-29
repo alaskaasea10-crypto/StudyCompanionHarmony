@@ -9,7 +9,7 @@ const cache = new Map();
 function load(name) {
   if (name === 'BuildProfile') return { DEBUG: false };
   if (cache.has(name)) return cache.get(name);
-  const filename = name === 'StudyModels' ? 'models/StudyModels.ets' :
+  const filename = name === 'SubjectDisplayName' ? 'utils/SubjectDisplayName.ets' : name === 'StudyModels' ? 'models/StudyModels.ets' :
     name === 'QuestionBankModels' ? 'models/QuestionBankModels.ets' : `services/${name}.ets`;
   const source = fs.readFileSync(path.join(root, filename), 'utf8');
   const box = { exports: {}, Date, console, require: input => load(path.basename(input)) };

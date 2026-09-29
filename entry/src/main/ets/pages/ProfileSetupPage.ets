@@ -3,6 +3,7 @@ import { UserAvatar } from '../components/UserAvatar';
 import { StudyPlanet } from '../components/StudyPlanet';
 import { ScheduleItem } from '../models/StudyModels';
 import { formatSubjectName } from '../utils/SubjectDisplayName';
+import { GoalDatePickerField } from '../components/GoalDatePickerField';
 
 @Component
 export struct ProfileSetupPageView {
@@ -25,6 +26,7 @@ export struct ProfileSetupPageView {
   @Prop scheduleDraftItems: ScheduleItem[] = [];
   onTextChange: (field: string, value: string) => void = () => {};
   onChoiceChange: (group: string, value: string) => void = () => {};
+  onExamDateChange: (value: string) => void = () => {};
   onUseDemoSchedule: () => void = () => {};
   onImportSchedule: () => void = () => {};
   onConfirmSchedule: () => void = () => {};
@@ -190,11 +192,10 @@ export struct ProfileSetupPageView {
               .width('100%').fontSize(11).lineHeight(17).fontColor('#8B90A5')
           }
           Text('考试/目标日期').width('100%').fontSize(13).fontColor('#777C90')
-          TextInput({ placeholder: '考试日期，例如 2026-09-07', text: this.profileExamDate })
-            .width('100%').height(48).backgroundColor('#F6F7FB').borderRadius(14)
-            .onChange((value: string) => {
-              this.onTextChange('examDate', value);
-            })
+          GoalDatePickerField({
+            value: this.profileExamDate,
+            onConfirm: (value: string) => { this.onExamDateChange(value); }
+          })
         }
         .width('100%').padding(18).backgroundColor(Color.White).borderRadius(22)
 
