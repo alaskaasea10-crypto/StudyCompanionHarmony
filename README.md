@@ -1,6 +1,6 @@
 # 学伴·星球 StudyCompanionHarmony
 
-面向大学生日常学习场景的 HarmonyOS Learning Agent，通过课表、任务、可用时间、Focus 和学习反馈，帮助用户判断当前应该优先完成什么。
+面向大学生日常学习场景的 HarmonyOS Learning Agent，通过课表、任务、可用时间、Focus 和学习反馈，帮助用户判断当前应该优先完成什么任务。
 
 ## Overview
 
